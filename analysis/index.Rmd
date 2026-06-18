@@ -9,3 +9,7 @@ editor_options:
 ---
 
 Welcome to my research website.
+
+- [Selecting oat parents for the New York environment](brapi_selection_pipeline.html) —
+  a BrAPI → T3/Oat pipeline: find NY-region phenotyping trials, their genotyping
+  projects, run two-stage genomic prediction (BGLR), and rank accessions for crossing.

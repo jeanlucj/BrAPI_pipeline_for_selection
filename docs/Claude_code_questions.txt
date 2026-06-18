@@ -1,0 +1,1 @@
+[2026-06-18 14:30:34] In my last prompt I said "Put in memory that these files should be updated when the pipeline is updated" but I realize I don't really know what that means "put in memory".  You say you have a MEMORY.md.  Where is it?  Now that this pipeline is built (at least draft 1), should we do an /init?

@@ -1,0 +1,132 @@
+---
+title: "Selecting oat parents for the New York environment via BrAPI + genomic prediction"
+author: "jeanlucj"
+date: "`r Sys.Date()`"
+output:
+  workflowr::wflow_html:
+    toc: true
+    toc_float: true
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 8, fig.height = 5)
+```
+
+## Overview
+
+This pipeline pulls oat data from **T3/Oat** over **BrAPI** and ends in a ranked
+list of accessions to use as parents for crossing, targeted at the **New York
+growing environment**. The steps are:
+
+1. Find phenotyping trials at locations within a radius of a New York center point.
+2. Pull phenotypes and field design for those trials.
+3. Identify the genotyping projects / protocols that cover the trial accessions,
+   and download marker data for the best-covering protocol.
+4. **Stage 1** — per-trial adjusted means (BLUEs) accounting for field design.
+5. **Stage 2** — multi-environment genomic prediction (BGLR) → GEBVs for every
+   genotyped candidate, including those never phenotyped in the NY region.
+6. Rank candidates with a selection index and flag redundant (closely related) picks.
+
+All parameters live in `code/config.R`. Each step caches its pull/result under
+`data/`; set `refresh = TRUE` (or delete the cache) to re-run a step.
+
+```{r source-code}
+library(tidyverse)
+purrr::walk(
+  c("config.R", "01_connect.R", "02_find_trials.R", "03_get_phenotypes.R",
+    "04_find_genotyping.R", "05_stage1_blues.R", "06_stage2_genomic_prediction.R",
+    "07_select.R"),
+  ~ source(here::here("code", .x))
+)
+conn <- connect_t3()
+```
+
+## 1. Phenotyping trials in the New York region
+
+```{r trials}
+trials <- find_ny_trials(conn)
+cat(nrow(trials), "phenotyping trials within", RADIUS_KM, "km of",
+    sprintf("(%.2f, %.2f)\n", CENTER_LAT, CENTER_LON))
+trials |>
+  count(locationName, countryCode, distance_km = round(distance_km)) |>
+  arrange(distance_km) |>
+  knitr::kable(caption = "Trials by location (nearest first)")
+```
+
+```{r trials-map}
+ggplot(trials, aes(longitude, latitude)) +
+  geom_point(aes(size = after_stat(count)), stat = "count", alpha = 0.6) +
+  annotate("point", x = CENTER_LON, y = CENTER_LAT, colour = "red", shape = 4, size = 4) +
+  labs(title = "Trial locations (red x = NY center)", size = "n trials") +
+  theme_minimal()
+```
+
+## 2. Phenotypes and field design
+
+```{r pheno}
+pheno <- get_phenotypes(conn, trials$studyDbId)
+cat("Observations:", nrow(pheno$pheno),
+    "| traits:", n_distinct(pheno$pheno$trait),
+    "| accessions:", nrow(pheno$accessions), "\n")
+pheno$pheno |>
+  group_by(trait) |>
+  summarise(n_obs = n(), n_studies = n_distinct(studyDbId),
+            mean = mean(value), sd = sd(value), .groups = "drop") |>
+  knitr::kable(caption = "Trait summary")
+```
+
+## 3. Genotyping coverage and combined relationship matrix
+
+With `GENO_PROTOCOL_ID = NULL` every protocol that genotypes our accessions is
+downloaded and its genomic relationship matrix is EM-combined into one (large GBS
+panels are thinned to ~`TARGET_DENSITY` markers; undownloadable ones are skipped).
+A precomputed pedigree relationship matrix (`PEDIGREE_DIR`) is stitched in when it
+overlaps our accessions.
+
+```{r geno}
+geno <- find_and_get_genotypes(conn, pheno$accessions)
+knitr::kable(head(geno$projects, 10),
+             caption = "Genotyping PROJECTS ranked by accession coverage")
+knitr::kable(head(geno$protocols, 10),
+             caption = "Genotyping PROTOCOLS ranked by accession coverage")
+cat("Protocols combined:", paste(geno$protocol_ids, collapse = ", "), "\n")
+cat("Combined GRM:", nrow(geno$G), "x", ncol(geno$G), "accessions\n")
+```
+
+## 4. Stage 1 — per-trial BLUEs
+
+```{r stage1}
+blues <- stage1_blues(pheno$pheno)
+cat("BLUEs:", nrow(blues), "across", n_distinct(blues$studyDbId), "studies\n")
+head(blues) |> knitr::kable(caption = "Example Stage-1 BLUEs")
+```
+
+## 5. Stage 2 — genomic prediction (BGLR)
+
+```{r stage2}
+gebv <- stage2_gblup(blues, geno)
+gebv |>
+  group_by(trait) |>
+  summarise(n_candidates = n(),
+            n_phenotyped = sum(phenotyped),
+            n_predicted_only = sum(!phenotyped), .groups = "drop") |>
+  knitr::kable(caption = "GEBV candidates per trait")
+```
+
+```{r cv}
+cv <- map_dfr(unique(gebv$trait), ~ cv_accuracy(blues, geno, .x))
+knitr::kable(cv, caption = "5-fold cross-validated prediction accuracy")
+```
+
+## 6. Selected parents
+
+```{r select}
+selected <- select_parents(gebv, geno = geno, n_select = 20)
+selected |>
+  filter(selected) |>
+  knitr::kable(caption = "Top candidates for crossing (selection index)")
+cat("Full ranking written to", output_path("selected_parents.csv"), "\n")
+```
