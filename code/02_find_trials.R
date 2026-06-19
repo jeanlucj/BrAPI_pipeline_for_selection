@@ -1,11 +1,15 @@
-# Step 2: select the trials to analyze.
+# Step 2: select the trials to analyze, tagged training vs test.
 #
-# Two modes:
-#   * STUDY_NAMES set  -> analyze exactly those trials (matched by studyName),
+# Training trials (two modes):
+#   * TRAINING_TRIALS set  -> train on exactly those trials (matched by studyName),
 #     ignoring the geographic search.
-#   * STUDY_NAMES NULL -> pull all locations (GeoJSON coordinates), keep those
+#   * TRAINING_TRIALS NULL -> pull all locations (GeoJSON coordinates), keep those
 #     within RADIUS_KM of the NY center point, and keep studies of any type in
 #     STUDY_TYPES grown there in the requested YEARS.
+# Test trials: studies matched by TEST_TRIALS studyName (their accessions are
+# prediction targets; their phenotypes are not used for training). A trial named
+# in both lists is treated as training. The returned tibble carries a `role`
+# column ("training"/"test").
 # Either way location metadata (name, lon/lat, distance_km) is joined on. (The
 # /studies endpoint does not honor a server-side locationDbId filter, so
 # filtering is done client-side.)
@@ -47,18 +51,21 @@ get_studies <- function(conn) {
   })
 }
 
-#' Select the trials to analyze.
+#' Select the trials to analyze (training + test).
 #'
-#' If `study_names` is not NULL, returns exactly those trials (matched by
-#' studyName), ignoring the geographic search. Otherwise returns trials of any
-#' type in `study_types` grown within `radius_km` of the center point in `years`.
+#' Training trials: if `training_trials` is not NULL, exactly those (matched by
+#' studyName); otherwise trials of any type in `study_types` grown within
+#' `radius_km` of the center point in `years`. Test trials: those matched by
+#' `test_trials` that are not already training (training takes precedence).
 #'
-#' @return A tibble of studies (studyDbId, names, location, year, distance_km).
-#'   Cached to data/ny_trials.rds.
+#' @return A tibble of studies (studyDbId, names, location, year, distance_km)
+#'   with a `role` column ("training"/"test"). Cached to data/ny_trials.rds.
 find_ny_trials <- function(conn,
                            center_lat = CENTER_LAT, center_lon = CENTER_LON,
                            radius_km = RADIUS_KM, years = YEARS,
-                           study_types = STUDY_TYPES, study_names = STUDY_NAMES,
+                           study_types = STUDY_TYPES,
+                           training_trials = TRAINING_TRIALS,
+                           test_trials = TEST_TRIALS,
                            refresh = FALSE) {
   cache <- cache_path("ny_trials.rds")
   if (!refresh && file.exists(cache)) return(read_rds(cache))
@@ -72,26 +79,43 @@ find_ny_trials <- function(conn,
 
   studies <- get_studies(conn)
 
-  if (!is.null(study_names)) {
-    # Explicit trial list: select by name, keep even if the location lacks
+  if (!is.null(training_trials)) {
+    # Explicit training list: select by name, keep even if the location lacks
     # coordinates (left_join), regardless of type/year.
-    out <- studies |>
-      filter(studyName %in% study_names) |>
+    train <- studies |>
+      filter(studyName %in% training_trials) |>
       left_join(locs, by = "locationDbId") |>
       arrange(year, studyName)
-    missing <- setdiff(study_names, out$studyName)
+    missing <- setdiff(training_trials, train$studyName)
     if (length(missing) > 0) {
-      warning("STUDY_NAMES not found on the server: ",
+      warning("TRAINING_TRIALS not found on the server: ",
               paste(missing, collapse = ", "))
     }
   } else {
     # Geographic search: trials of any allowable type within the radius / years.
-    out <- studies |>
+    train <- studies |>
       filter(studyType %in% study_types, year %in% years) |>
       inner_join(filter(locs, distance_km <= radius_km), by = "locationDbId") |>
       arrange(distance_km, year)
   }
+  train <- mutate(train, role = "training")
 
+  # Test trials: by name, excluding any already selected as training.
+  test <- tibble()
+  if (!is.null(test_trials)) {
+    test <- studies |>
+      filter(studyName %in% test_trials, !studyDbId %in% train$studyDbId) |>
+      left_join(locs, by = "locationDbId") |>
+      arrange(year, studyName) |>
+      mutate(role = "test")
+    missing <- setdiff(test_trials, c(test$studyName, train$studyName))
+    if (length(missing) > 0) {
+      warning("TEST_TRIALS not found on the server: ",
+              paste(missing, collapse = ", "))
+    }
+  }
+
+  out <- bind_rows(train, test)
   write_rds(out, cache)
   out
 }

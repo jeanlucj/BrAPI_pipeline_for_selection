@@ -114,6 +114,9 @@ cv_accuracy <- function(blues, geno, trait, k = 5, model = BGLR_MODEL,
   model <- .resolve_model(model, geno)
   b     <- filter(blues, trait == !!trait, genotype %in% rownames(K))
   gm    <- .genotype_means(b)
+  # Need >= 2 genotyped means for a meaningful CV correlation; bail early (no
+  # BGLR) for traits with too little overlap with the kernel.
+  if (nrow(gm) < 2) return(tibble(trait = trait, k = k, n = 0L, accuracy = NA_real_))
   set.seed(seed)
   folds <- sample(rep_len(1:k, nrow(gm)))
   preds <- map_dfr(1:k, function(f) {
@@ -123,7 +126,11 @@ cv_accuracy <- function(blues, geno, trait, k = 5, model = BGLR_MODEL,
       select(genotype, GEBV)
   })
   obs <- gm |> select(genotype, y)
-  ev  <- inner_join(preds, obs, by = "genotype")
-  tibble(trait = trait, k = k, n = nrow(ev),
-         accuracy = stats::cor(ev$GEBV, ev$y, use = "complete.obs"))
+  ev  <- inner_join(preds, obs, by = "genotype") |>
+    filter(!is.na(GEBV), !is.na(y))
+  # cor() errors on "no complete element pairs" and is undefined for <2 points;
+  # a degenerate trait (e.g. too few genotypes for k folds) shouldn't abort the
+  # whole report, so report NA accuracy for it instead.
+  acc <- if (nrow(ev) >= 2) stats::cor(ev$GEBV, ev$y) else NA_real_
+  tibble(trait = trait, k = k, n = nrow(ev), accuracy = acc)
 }

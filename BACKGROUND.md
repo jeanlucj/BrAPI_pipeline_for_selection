@@ -66,12 +66,37 @@ project:
 
 - Each protocol contributes a standardized GRM (mean diagonal = 1) as a *partial
   covariance* over the accessions it genotyped.
-- Accessions genotyped on **≥ 2 platforms act as bridges**: the EM uses them to
+- Accessions appearing in **≥ 2 partials act as bridges** — counting each
+  genotyping platform *and* each pedigree group (below). The EM uses them to
   *impute* relationships between accessions that were never co-genotyped, treating
-  the unobserved blocks as missing data in a multivariate Wishart model.
+  the unobserved blocks as missing data in a multivariate Wishart model. Because a
+  pedigree group counts as a partial, an accession seen on only **one** platform is
+  still retained when it also sits in a pedigree group — it bridges that platform's
+  marker GRM to the pedigree matrix, even if it was never phenotyped.
 - The result is one combined GRM spanning the union of accessions. Pairs with no
   shared platform and no bridge stay near the prior — a faithful reflection of
   genuine lack of connectivity rather than a fabricated relationship.
+
+### Degrees of freedom = how much each partial is trusted
+Each partial enters the EM with a **degrees-of-freedom** value νᵢ that acts as its
+relative weight in the M-step (Ψ = Σνᵢ·E[…] / Σνᵢ). In the Wishart model νᵢ is the
+number of independent samples behind the matrix (Akdemir et al. 2020, *Front. Plant
+Sci.* 11:947; 2023, *Axioms* 12:161): a single common ν leaves the combined estimate
+unchanged (it only scales the standard errors), but **differing** νᵢ reweight the
+estimate. A marker GRM is estimated over *markers*, not individuals, so its df should
+reflect the number of markers — but markers are in strong LD, so the raw count badly
+overstates the independent information. We therefore set each marker GRM's df from its
+**effective number of independent samples** (Galwey 2009's `(Σ√λ)²/Σλ` over the GRM
+eigenvalues, scale-invariant and bounded by the rank).
+
+That measure is used only for the GRMs' *relative* ordering: the values are then
+**re-centered on `GRM_DF_MEAN` and their spread capped at `GRM_DF_STDEV`** (the lesser
+of `GRM_DF_STDEV` and the observed SD). Pedigree partials keep a fixed `PEDIGREE_DF`,
+so `GRM_DF_MEAN` vs `PEDIGREE_DF` is the explicit knob for how much more marker
+matrices are trusted than pedigree (default 60 vs 30 ≈ 2×). This deliberately bounds
+an artifact of the eigenvalue measure — more *diverse* panels have flatter spectra and
+thus a higher effective N — so panel diversity nudges the relative weighting but cannot
+dominate it.
 
 `GENO_PROTOCOL_ID = NULL` triggers this multi-platform combine across all covering
 protocols; a single id skips it (one GRM, faster, with a usable marker matrix).
@@ -95,16 +120,21 @@ first makes the accessions look complete again instead of discarding all of them
 A **pedigree (numerator) relationship matrix** can stitch together marker GRMs that
 remain disconnected — pedigree links span accessions that no shared platform covers.
 The pipeline reads **precomputed** pedigree relationship matrices from the sibling
-`BrAPI_pedigree_relmat` project (`PEDIGREE_DIR`) and adds any matrix overlapping our
-accessions to the EM combine as an extra partial covariance, weighted by
-`PEDIGREE_DF`.
+`BrAPI_pedigree_relmat` project (`PEDIGREE_DIR`) and adds each group overlapping our
+accessions **or bridges** to the EM combine as an extra partial covariance, weighted
+by `PEDIGREE_DF`.
 
-**Current limitation for T3/Oat:** that project only precomputed matrices for its
-*small* pedigree groups; the large connected component (~27,800 accessions, where
-the NY breeding lines mostly live) exceeded its size cap and was skipped. So the
-pedigree stitch rarely engages for Oat today. The mechanism is correct and fully
-exercised where matrices exist (e.g. wheat); to enable it for Oat, rerun the pedigree
-project with a higher `max_relmat_size`.
+**Two keying spaces meet here.** Pedigree group CSVs are keyed by `germplasmDbId`,
+but marker GRMs (and `keep_samples`) are keyed by `germplasmName`. To decide whether
+a *non-phenotyped* accession bridges a platform to a pedigree group, the pipeline
+needs names for accessions beyond our own. It gets them from the companion
+`germplasm_cache_<id>.rds` (a raw BrAPI germplasm dump the pedigree project writes
+next to `PEDIGREE_DIR`); if that cache is absent it degrades gracefully to
+phenotyped-only pedigree treatment. Group **membership** is read from the cheap
+`<id>_pedigree_groups.rds` so bridge detection never densifies the group, and the
+group matrix itself is reconstructed over only the kept (our + bridge) accessions —
+so the large Oat component (~27,800 accessions, a 1 GB triplet CSV) never becomes a
+full dense matrix.
 
 ## Selection
 
@@ -116,8 +146,22 @@ keep diversity in the crossing block.
 
 ## Targeting "New York"
 
-The environment is targeted at the **trial-selection** stage: trials are chosen by
-proximity to a New York center point (or by an explicit `STUDY_NAMES` list). Because
-Stage 2 removes environment main effects and predicts a genomic value across those
-NY-region environments, the resulting GEBVs reflect performance in that target
-environment rather than a global mean.
+The environment is targeted at the **trial-selection** stage: training trials are
+chosen by proximity to a New York center point (or by an explicit `TRAINING_TRIALS`
+list). Because Stage 2 removes environment main effects and predicts a genomic value
+across those NY-region environments, the resulting GEBVs reflect performance in that
+target environment rather than a global mean.
+
+## Who gets predicted
+
+Prediction is scoped explicitly so the relationship matrix stays small and relevant.
+The target set is the union of the training-trial accessions (always predicted),
+`TEST_TRIALS` accessions, and `TEST_ACCESSIONS`. The pipeline builds the full
+EM-combined relationship matrix (using bridges and pedigree to estimate cross-platform
+relatedness) and then **subsets it to the targets** — bridge/extra accessions inform
+the combine but are not carried into prediction. Test accessions are predicted only if
+they land in the matrix (via genotype or pedigree); training accessions are always
+predicted, and one with neither genotype nor pedigree is **injected** with a
+prior-only row (diagonal = mean diagonal, zero off-diagonals), so it still receives a
+GEBV shrunk toward the mean. `TEST_TRIALS` phenotypes are held out of training (a
+trial listed in both `TRAINING_TRIALS` and `TEST_TRIALS` is used for training).

@@ -17,21 +17,16 @@ knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
 
 ## Overview
 
-This pipeline pulls oat data from **T3/Oat** over **BrAPI** and ends in a ranked
-list of accessions to use as parents for crossing, targeted at the **New York
-growing environment**. The steps are:
+This pipeline pulls oat data from **T3/Oat** over **BrAPI** and ends in a ranked list of accessions to use as parents for crossing, targeted at the **New York growing environment**. The steps are:
 
-1. Find phenotyping trials at locations within a radius of a New York center point.
-2. Pull phenotypes and field design for those trials.
-3. Identify the genotyping projects / protocols that cover the trial accessions,
-   and download marker data for the best-covering protocol.
-4. **Stage 1** — per-trial adjusted means (BLUEs) accounting for field design.
-5. **Stage 2** — multi-environment genomic prediction (BGLR) → GEBVs for every
-   genotyped candidate, including those never phenotyped in the NY region.
-6. Rank candidates with a selection index and flag redundant (closely related) picks.
+1.  Find the **training** trials (within a radius of a New York center point, or an explicit `TRAINING_TRIALS` list) plus any `TEST_TRIALS`, tagged by role.
+2.  Pull phenotypes and field design, and split them into training vs test sets.
+3.  Identify the genotyping projects / protocols covering the training **and** test accessions, build a combined relationship matrix, and **subset it to the prediction targets** (training ∪ predictable test; `TEST_ACCESSIONS` included).
+4.  **Stage 1** — per-trial adjusted means (BLUEs) from the training trials only.
+5.  **Stage 2** — multi-environment genomic prediction (BGLR) → GEBVs for the target accessions, including those never phenotyped.
+6.  Rank candidates with a selection index and flag redundant (closely related) picks.
 
-All parameters live in `code/config.R`. Each step caches its pull/result under
-`data/`; set `refresh = TRUE` (or delete the cache) to re-run a step.
+All parameters live in `code/config.R`. Each step caches its pull/result under `data/`; set `refresh = TRUE` (or delete the cache) to re-run a step.
 
 ```{r source-code}
 library(tidyverse)
@@ -48,17 +43,19 @@ conn <- connect_t3()
 
 ```{r trials}
 trials <- find_ny_trials(conn)
-cat(nrow(trials), "phenotyping trials within", RADIUS_KM, "km of",
-    sprintf("(%.2f, %.2f)\n", CENTER_LAT, CENTER_LON))
+cat(sum(trials$role == "training"), "training and", sum(trials$role == "test"),
+    "test trial(s).\n")
 trials |>
-  count(locationName, countryCode, distance_km = round(distance_km)) |>
-  arrange(distance_km) |>
-  knitr::kable(caption = "Trials by location (nearest first)")
+  count(role, locationName, countryCode, distance_km = round(distance_km)) |>
+  arrange(role, distance_km) |>
+  knitr::kable(caption = "Trials by role and location (nearest first)")
 ```
 
 ```{r trials-map}
-ggplot(trials, aes(longitude, latitude)) +
-  geom_point(aes(size = after_stat(count)), stat = "count", alpha = 0.6) +
+trials |>
+  count(longitude, latitude, name = "n_trials") |>
+  ggplot(aes(longitude, latitude)) +
+  geom_point(aes(size = n_trials), alpha = 0.6) +
   annotate("point", x = CENTER_LON, y = CENTER_LAT, colour = "red", shape = 4, size = 4) +
   labs(title = "Trial locations (red x = NY center)", size = "n trials") +
   theme_minimal()
@@ -68,9 +65,10 @@ ggplot(trials, aes(longitude, latitude)) +
 
 ```{r pheno}
 pheno <- get_phenotypes(conn, trials$studyDbId)
+sets  <- split_by_role(pheno, trials)   # train_pheno, train_acc, test_acc
 cat("Observations:", nrow(pheno$pheno),
-    "| traits:", n_distinct(pheno$pheno$trait),
-    "| accessions:", nrow(pheno$accessions), "\n")
+    "| training accessions:", nrow(sets$train_acc),
+    "| test-trial accessions:", nrow(sets$test_acc), "\n")
 pheno$pheno |>
   group_by(trait) |>
   summarise(n_obs = n(), n_studies = n_distinct(studyDbId),
@@ -80,26 +78,24 @@ pheno$pheno |>
 
 ## 3. Genotyping coverage and combined relationship matrix
 
-With `GENO_PROTOCOL_ID = NULL` every protocol that genotypes our accessions is
-downloaded and its genomic relationship matrix is EM-combined into one (large GBS
-panels are thinned to ~`TARGET_DENSITY` markers; undownloadable ones are skipped).
-A precomputed pedigree relationship matrix (`PEDIGREE_DIR`) is stitched in when it
-overlaps our accessions.
+With `GENO_PROTOCOL_ID = NULL` every protocol that genotypes our training **and** test accessions is downloaded and its genomic relationship matrix is EM-combined into one (large GBS panels are thinned to \~`TARGET_DENSITY` markers; undownloadable ones are skipped). A precomputed pedigree relationship matrix (`PEDIGREE_DIR`) is stitched in when it overlaps our accessions. The combined matrix is then **subset to the prediction targets** (training + predictable test); training accessions with neither genotypes nor pedigree are injected with a prior-only diagonal.
 
 ```{r geno}
-geno <- find_and_get_genotypes(conn, pheno$accessions)
+geno <- find_and_get_genotypes(conn, sets$train_acc, sets$test_acc, TEST_ACCESSIONS)
 knitr::kable(head(geno$projects, 10),
              caption = "Genotyping PROJECTS ranked by accession coverage")
 knitr::kable(head(geno$protocols, 10),
              caption = "Genotyping PROTOCOLS ranked by accession coverage")
 cat("Protocols combined:", paste(geno$protocol_ids, collapse = ", "), "\n")
-cat("Combined GRM:", nrow(geno$G), "x", ncol(geno$G), "accessions\n")
+cat("Prediction GRM:", nrow(geno$G), "x", ncol(geno$G), "accessions\n")
 ```
 
 ## 4. Stage 1 — per-trial BLUEs
 
+Stage 1 uses **training-trial phenotypes only** (`sets$train_pheno`); test-trial phenotypes are held out of model fitting.
+
 ```{r stage1}
-blues <- stage1_blues(pheno$pheno)
+blues <- stage1_blues(sets$train_pheno)
 cat("BLUEs:", nrow(blues), "across", n_distinct(blues$studyDbId), "studies\n")
 head(blues) |> knitr::kable(caption = "Example Stage-1 BLUEs")
 ```

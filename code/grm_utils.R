@@ -13,3 +13,15 @@
 # Standardize a relationship matrix so its mean diagonal is 1 (the form the EM
 # combiner expects for its partial covariances).
 std_grm <- function(G) G / mean(diag(G))
+
+# Effective number of independent samples behind a relationship matrix, via
+# Galwey (2009)'s "effective number of independent tests": (sum sqrt(lambda))^2 /
+# sum(lambda) over the positive eigenvalues. Scale-invariant (robust to std_grm
+# scaling), bounded [1, rank]. Used to set each marker GRM's EM degrees of freedom
+# (markers are in LD, so a raw count overstates the independent information).
+.effective_n <- function(G) {
+  lambda <- eigen(G, symmetric = TRUE, only.values = TRUE)$values
+  lambda <- lambda[lambda > 1e-8]                    # drop ~zero / tiny-negative
+  if (length(lambda) < 1) return(1)
+  (sum(sqrt(lambda)))^2 / sum(lambda)
+}

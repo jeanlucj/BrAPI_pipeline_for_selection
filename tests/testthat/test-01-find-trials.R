@@ -15,24 +15,36 @@ make_trials_conn <- function() {
 }
 
 test_that("radius mode keeps in-range phenotyping trials within the years", {
-  out <- find_ny_trials(make_trials_conn(), refresh = TRUE)
+  out <- find_ny_trials(make_trials_conn(), refresh = TRUE, training_trials = NULL)
   expect_setequal(out$studyDbId, c("s1", "s5"))        # not far/old/wrong-type
   expect_true(all(out$distance_km <= 500))
-  expect_true(all(c("locationName", "distance_km") %in% names(out)))
+  expect_true(all(c("locationName", "distance_km", "role") %in% names(out)))
+  expect_true(all(out$role == "training"))
 })
 
-test_that("STUDY_NAMES mode selects exactly those trials regardless of type/year", {
+test_that("TRAINING_TRIALS mode selects exactly those trials regardless of type/year", {
   expect_warning(
     out <- find_ny_trials(make_trials_conn(), refresh = TRUE,
-                          study_names = c("Near_geno_2018",   # wrong type
-                                          "Near_pheno_2000",  # excluded year
-                                          "NOPE")),           # bogus
+                          training_trials = c("Near_geno_2018",   # wrong type
+                                              "Near_pheno_2000",  # excluded year
+                                              "NOPE")),           # bogus
     "not found on the server: NOPE")
   expect_setequal(out$studyName, c("Near_geno_2018", "Near_pheno_2000"))
+  expect_true(all(out$role == "training"))
 })
 
 test_that("STUDY_TYPES admits multiple types together", {
-  out <- find_ny_trials(make_trials_conn(), refresh = TRUE,
+  out <- find_ny_trials(make_trials_conn(), refresh = TRUE, training_trials = NULL,
                         study_types = c("phenotyping_trial", "genotyping"))
   expect_setequal(out$studyDbId, c("s1", "s4", "s5"))  # s4 now admitted
+})
+
+test_that("test_trials are tagged 'test'; training wins on overlap", {
+  out <- find_ny_trials(make_trials_conn(), refresh = TRUE,
+                        training_trials = "Near_pheno_2018",
+                        test_trials = c("Near3_pheno_2019", "Near_pheno_2018"))
+  roles <- setNames(out$role, out$studyDbId)
+  expect_equal(unname(roles["s1"]), "training")   # overlap -> training
+  expect_equal(unname(roles["s5"]), "test")
+  expect_equal(sum(out$studyDbId == "s1"), 1L)    # not duplicated as test
 })

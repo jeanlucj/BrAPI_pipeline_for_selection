@@ -30,7 +30,7 @@ get_phenotypes <- function(conn, study_ids,
   cache <- cache_path("phenotypes.rds")
   if (!refresh && file.exists(cache)) return(read_rds(cache))
 
-  rows <- map_dfr(as.character(study_ids), function(sid) {
+  rows <- map(as.character(study_ids), function(sid) {
     resp <- conn$get("/observationunits",
                      query = list(studyDbId = sid, includeObservations = "true"),
                      page = "all", pageSize = 500)
@@ -56,7 +56,8 @@ get_phenotypes <- function(conn, study_ids,
         value     = map_dbl(obs, ~ suppressWarnings(as.numeric(.x$value %||% NA)))
       )
     })
-  })
+  }, .progress = "Phenotypes: downloading by study") |>
+    list_rbind()
 
   if (length(trait_patterns) > 0 && nrow(rows) > 0) {
     pat  <- str_c(trait_patterns, collapse = "|")
@@ -74,4 +75,28 @@ get_phenotypes <- function(conn, study_ids,
   out <- list(pheno = pheno, design = design, accessions = accessions)
   write_rds(out, cache)
   out
+}
+
+#' Split a phenotype pull into training vs test sets using trial roles.
+#'
+#' @param pheno  get_phenotypes() output (uses its `pheno` long table).
+#' @param trials find_ny_trials() output with a `role` column ("training"/"test").
+#' @return list(train_pheno, train_acc, test_acc):
+#'   - train_pheno: long phenotypes from training trials only (feeds stage1_blues);
+#'   - train_acc / test_acc: distinct (germplasmDbId, germplasmName) observed in the
+#'     training / test trials respectively.
+split_by_role <- function(pheno, trials) {
+  train_ids <- trials$studyDbId[trials$role == "training"]
+  test_ids  <- trials$studyDbId[trials$role == "test"]
+  p <- pheno$pheno
+  acc_in <- function(ids) {
+    p |>
+      filter(studyDbId %in% ids, !is.na(germplasmDbId)) |>
+      distinct(germplasmDbId, germplasmName)
+  }
+  list(
+    train_pheno = filter(p, studyDbId %in% train_ids),
+    train_acc   = acc_in(train_ids),
+    test_acc    = acc_in(test_ids)
+  )
 }

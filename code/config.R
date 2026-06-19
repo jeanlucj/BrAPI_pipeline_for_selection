@@ -8,6 +8,9 @@ here::i_am("code/config.R")
 # --- Database ----------------------------------------------------------------
 DB_NAME <- "T3/Oat"
 
+# --- Refresh: force downloads from the database rather than use cache --------
+PIPELINE_REFRESH <- FALSE
+
 # --- Target environment: New York --------------------------------------------
 # Center point (Ithaca, NY) and the radius that defines "NY + surrounding
 # region". Trials at locations within RADIUS_KM of the center are kept.
@@ -15,22 +18,46 @@ CENTER_LAT <- 42.44
 CENTER_LON <- -76.50
 RADIUS_KM  <- 500
 
-# --- Study selection ---------------------------------------------------------
-# Explicit trials: a vector of studyName values. When NOT NULL the pipeline
-# analyzes exactly these trials and ignores the geographic search (radius /
-# years) below. NULL = use the location-radius search instead.
-STUDY_NAMES <- NULL
+# --- Training-trial selection ------------------------------------------------
+# Training trials: a vector of studyName values whose phenotypes TRAIN the
+# genomic-prediction model. When NOT NULL the pipeline trains on exactly these
+# trials and ignores the geographic search (radius / years) below. NULL = use
+# the location-radius search instead. Accessions in the training trials are
+# ALWAYS predicted (and force-included in the relationship matrix even if they
+# have neither genotypes nor pedigree).
+TRAINING_TRIALS <- NULL
+TRAINING_TRIALS <- c("Cornell_WinterOatPeaIntercrop_2024_Ithaca",
+                     "CU_2025_Ithaca_WOP_PLOT",
+                     "CU_ARS_2026_WOP")
 
 # Allowable study types: a vector; trials of ANY of these types are analyzed
 # together in the two-stage BLUE -> GBLUP process. (Used by the radius search;
-# STUDY_NAMES, when set, selects by name regardless of type.)
-STUDY_TYPES <- c("phenotyping_trial")   # T3/Oat studyType(s) for field trials
-YEARS       <- 2015:2025                 # radius search: keep trials in these seasons
+# TRAINING_TRIALS, when set, selects by name regardless of type.)
+STUDY_TYPES <- c("phenotyping_trial", "Advanced Yield Trial",
+                 "Preliminary Yield Trial", "Uniform Yield Trial",
+                 "Variety Release Trial")   # T3/Oat studyType(s) for field trials
+YEARS       <- 2015:2026                 # radius search: keep trials in these seasons
+
+# --- Prediction targets (who to predict) -------------------------------------
+# By default the pipeline predicts only the TRAINING_TRIALS accessions. Widen the
+# prediction set with either or both of:
+#   TEST_TRIALS     - a vector of studyName values; as many of their accessions as
+#                     can be predicted (present in the relationship matrix).
+#                     Their phenotypes are NOT used for training -- UNLESS a trial
+#                     is also in TRAINING_TRIALS, in which case it trains.
+#   TEST_ACCESSIONS - a vector of germplasmName values to predict (as many as can
+#                     be). Their dbIds are resolved via the pedigree germplasm
+#                     cache so their genotyping protocols are also downloaded.
+# The prediction set is the union of TRAINING accessions, TEST_TRIALS accessions,
+# and TEST_ACCESSIONS. NULL disables each.
+TEST_TRIALS     <- NULL
+TEST_ACCESSIONS <- NULL
 
 # --- Traits ------------------------------------------------------------------
 # Case-insensitive substrings matched against the BrAPI observationVariableName
 # (e.g. "Grain yield - g/m2|CO_350:0000260"). Empty vector = keep all traits.
 TRAIT_PATTERNS <- c("yield")
+TRAIT_PATTERNS <- c()
 
 # --- Genotyping --------------------------------------------------------------
 # Which genotyping protocol(s) to use for markers.
@@ -56,7 +83,20 @@ TARGET_DENSITY <- 10000
 # as an extra partial covariance to stitch otherwise-disjoint marker GRMs.
 # Set to NULL to disable. A missing folder is skipped gracefully.
 PEDIGREE_DIR <- here::here("..", "BrAPI_pedigree_relmat", "output", "T3_Oat")
-PEDIGREE_DF  <- 30   # EM degrees-of-freedom weight given to pedigree partials
+
+# --- EM-combine degrees of freedom -------------------------------------------
+# In the Wishart-EM combiner each partial covariance has a degrees-of-freedom
+# (df = effective # of independent samples) that acts as its relative WEIGHT when
+# the partials are merged. Marker GRMs get a df derived from their effective
+# number of independent samples (Galwey 2009 measure on the GRM eigenvalues), but
+# that measure only sets the GRMs' relative ordering: the values are then
+# re-centered on GRM_DF_MEAN with a spread capped at GRM_DF_STDEV. PEDIGREE_DF is
+# the fixed df for pedigree partials, so GRM_DF_MEAN vs PEDIGREE_DF controls how
+# much more marker matrices are trusted than pedigree (here ~2x). Keep
+# GRM_DF_MEAN comfortably larger than GRM_DF_STDEV so all dfs stay positive.
+GRM_DF_MEAN  <- 60   # center of the marker-GRM dfs
+GRM_DF_STDEV <- 15   # cap on the spread of the marker-GRM dfs
+PEDIGREE_DF  <- 30   # fixed EM degrees-of-freedom weight for pedigree partials
 
 # --- Genomic prediction (Stage 2, BGLR) --------------------------------------
 BGLR_MODEL  <- "RKHS"   # "RKHS" (genomic relationship kernel) or "BRR"/"BayesB"

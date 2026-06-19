@@ -37,3 +37,12 @@ test_that("EMCovarianceCombiner validates its inputs", {
   expect_error(EMCovarianceCombiner(list(), list()), "Empty")
   expect_error(EMCovarianceCombiner(list(diag(2)), list()), "Empty|Mismatch")
 })
+
+test_that(".effective_n is bounded, scale-invariant, and tracks the spectrum", {
+  expect_equal(.effective_n(diag(5)), 5)                 # k equal eigenvalues -> k
+  rank1 <- tcrossprod(1:6); diag(rank1) <- diag(rank1) + 1e-9
+  expect_lt(.effective_n(rank1), 1.05)                   # one dominant eigenvalue -> ~1
+  G <- crossprod(matrix(rnorm(60), 6, 10))
+  expect_equal(.effective_n(G), .effective_n(7 * G))     # scale-invariant
+  expect_lte(.effective_n(G), nrow(G))                   # bounded by rank
+})

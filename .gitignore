@@ -9,3 +9,16 @@ analysis/*png
 analysis/*html
 analysis/*_cache
 analysis/site_libs
+
+# Per-step caches and results (can be large, e.g. data/vcf_cache/); keep the
+# directory placeholders so the layout stays in the repo.
+data/*
+!data/README.md
+output/*
+!output/README.md
+
+# workflowr-rendered site output under docs/. The hand-maintained
+# Claude_code_*.txt notes and .nojekyll stay tracked.
+docs/*.html
+docs/figure/
+docs/site_libs/

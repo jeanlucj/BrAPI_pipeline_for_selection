@@ -34,3 +34,17 @@ test_that("empty trait_patterns keeps all traits", {
                        trait_patterns = character(0), refresh = TRUE)
   expect_true(any(stringr::str_detect(ph$pheno$trait, "height")))
 })
+
+test_that("split_by_role partitions phenotypes/accessions by trial role", {
+  pheno <- list(pheno = tibble::tibble(
+    studyDbId     = c("S1", "S1", "S2", "S3"),
+    germplasmDbId = c("1", "2", "3", "2"),
+    germplasmName = c("A", "B", "C", "B"),
+    trait = "yield", value = c(1, 2, 3, 4)))
+  trials <- tibble::tibble(studyDbId = c("S1", "S2", "S3"),
+                           role = c("training", "test", "test"))
+  s <- split_by_role(pheno, trials)
+  expect_setequal(s$train_pheno$studyDbId, "S1")          # only training trial
+  expect_setequal(s$train_acc$germplasmName, c("A", "B"))
+  expect_setequal(s$test_acc$germplasmName, c("C", "B"))  # from S2 + S3
+})

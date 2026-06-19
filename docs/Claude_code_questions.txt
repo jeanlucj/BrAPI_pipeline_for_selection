@@ -1,1 +1,6 @@
 [2026-06-18 14:30:34] In my last prompt I said "Put in memory that these files should be updated when the pipeline is updated" but I realize I don't really know what that means "put in memory".  You say you have a MEMORY.md.  Where is it?  Now that this pipeline is built (at least draft 1), should we do an /init?
+[2026-06-19 12:11:37] When I run workflowr::wflow_build("analysis/brapi_selection_pipeline.Rmd") there are no progress bars.  How can I run this and see them?
+[2026-06-19 12:58:47] Is the dependency on the behavior of BrAPI_pedigree_relmat noted anywhere?
+[2026-06-19 14:17:47] what is in .gitignore for this project?
+[2026-06-19 14:23:04] If I run using ren_pipeline.R it will not create anything in docs, right?
+[2026-06-19 16:02:37] Quick question.  For the EM combine, each relmat needs a degrees of freedom.  There is a parameter for PEDIGREE_DF.  How is the number obtained for the GRMs?

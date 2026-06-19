@@ -15,13 +15,15 @@ Or from R: `testthat::test_dir(here::here("tests","testthat"))`.
 
 - **Tier 1 — `test-01-*.R` (offline, fast).** Pure helpers and logic on synthetic
   inputs: `.Gmatrix`/`std_grm`, the EM combiner, VCF parsing/thinning/merge/QC,
-  pedigree-matrix loading, coverage-table parsing, trial selection (radius +
-  `STUDY_NAMES` + multi-type, via a fake connection), phenotype/design extraction,
-  Stage-1 BLUEs, the Stage-2 helpers, and `select_parents`.
+  pedigree-matrix loading + companion-file contracts, name→dbId resolution,
+  coverage-table parsing, trial selection (radius + `TRAINING_TRIALS` + `TEST_TRIALS`
+  roles + multi-type, via a fake connection), phenotype/design extraction +
+  `split_by_role`, Stage-1 BLUEs, the Stage-2 helpers, and `select_parents`.
 - **Tier 2 — `test-02-models.R` (offline, heavier ~1 s).** Runs the real models on
   synthetic data: BGLR RKHS prediction + cross-validation, and a fully *mocked*
-  `find_and_get_genotypes` exercising the multi-protocol EM-combine and
-  single-protocol paths (synthetic VCFs, no network).
+  `find_and_get_genotypes` exercising the multi-protocol EM-combine, single-protocol,
+  prediction-target subsetting, pedigree-bridged test accessions, and training
+  injection paths (synthetic VCFs, no network).
 - **Tier 3 — `test-03-live.R` (network + downloads, opt-in).** Hits T3/Oat:
   connect, find NY trials, pull phenotypes, build a GRM from the Oat 3K protocol.
   Skipped unless `RUN_LIVE_TESTS` is set.
