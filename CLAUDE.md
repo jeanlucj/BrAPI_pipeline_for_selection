@@ -71,6 +71,21 @@ worth stepping through, add its name to the right `EVAL_GROUPS` entry —
 `tests/testthat/test-01-evaluation.R` fails if a name there stops resolving.
 
 Things that require reading several files to grasp:
+- **Caches are keyed by the REQUEST, not just the filename** (`code/cache.R`, sourced via
+  `config.R`). Steps 02/03/04 and `synonyms.R` call
+  `cache_read(path, cache_key(...), refresh)` / `cache_write(path, value, key)`; the key
+  is stored in a **sidecar** `data/<name>.key.rds` so the payload file keeps its plain
+  format (the §9 diagnostics read `data/genotypes.rds` and `data/gebv.rds` directly).
+  A differing or *absent* key means rebuild — unknown provenance is not evidence of a
+  match. Build each key from what actually determined the result (step 02 omits the
+  radius parameters when `TRAINING_TRIALS` is set, since they are unused then), or
+  unrelated edits trigger pointless rebuilds. The mismatch message uses plain
+  `message()`, deliberately **not** `say()`/`note()`, so it survives a non-interactive
+  run — it explains why an expensive step is re-running. **Step 06 opts out on purpose**:
+  it validates by content and is superset-tolerant over traits, which key equality would
+  break. Step 03 additionally caches raw per-study observations to
+  `data/pheno_cache/<studyDbId>.rds` **unfiltered by trait** (trait filtering happens at
+  read time), so a `TRAIT_NAMES` change costs no download and a new trial costs one.
 - **All console reporting goes through `code/progress.R`** (`say`/`note`/`note_cache`
   for status, `step_start`/`step_done`/`print_timings` for per-step banners+timing,
   `pb_start`/`pb_tick`/`pb_done` and `pb_wrap` for bars), sourced via `config.R` and

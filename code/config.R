@@ -5,9 +5,11 @@
 library(tidyverse)
 here::i_am("code/config.R")
 
-# Console progress/status/timing helpers (say, note, step_start, pb_start, ...).
-# Sourced here because every step sources config.R.
+# Console progress/status/timing helpers (say, note, step_start, pb_start, ...) and
+# the request-keyed cache (cache_key/cache_read/cache_write). Sourced here because
+# every step sources config.R. cache.R uses say()/note(), so progress.R comes first.
 source(here::here("code", "progress.R"))
+source(here::here("code", "cache.R"))
 
 # --- Progress reporting ------------------------------------------------------
 # Whether the steps narrate themselves (status lines, progress bars, per-step

@@ -45,8 +45,12 @@ if (!exists("canonicalize_to_primary")) {
 #' is unavailable, or the BrAPI lookup fails -- so a synonym hiccup degrades to
 #' exact-name matching rather than aborting the genotyping step.
 build_alias_lookup <- function(conn, names, refresh = FALSE) {
+  # Keyed on the accession set: a map built for a smaller set does not contain the
+  # accessions that were added, so reusing it would silently lose their aliases.
+  key   <- cache_key(names = names, use_synonyms = isTRUE(USE_SYNONYMS))
   cache <- cache_path("synonym_map.rds")
-  if (!refresh && file.exists(cache)) return(read_rds(cache))
+  hit   <- cache_read(cache, key, refresh)
+  if (!is.null(hit)) return(hit)
   if (!.synonyms_available()) {
     if (isTRUE(USE_SYNONYMS))
       message("USE_SYNONYMS = TRUE but T3_brapi_helpers is unavailable ",
@@ -71,6 +75,6 @@ build_alias_lookup <- function(conn, names, refresh = FALSE) {
   n_syn <- sum(names(lk) != unname(lk))
   message(sprintf("Synonym map: %d aliases over %d accessions (%d synonym aliases).",
                   length(lk), length(names), n_syn))
-  write_rds(lk, cache)
+  cache_write(cache, lk, key)
   lk
 }

@@ -69,11 +69,19 @@ find_ny_trials <- function(conn,
                            training_trials = TRAINING_TRIALS,
                            test_trials = TEST_TRIALS,
                            refresh = FALSE) {
-  cache <- cache_path("ny_trials.rds")
-  if (!refresh && file.exists(cache)) {
-    note_cache(cache)
-    return(read_rds(cache))
+  # An explicit training_trials list bypasses the radius search entirely, so the
+  # geography/year/type parameters are part of the request ONLY in radius mode --
+  # otherwise editing RADIUS_KM would force a pointless rebuild.
+  key <- if (is.null(training_trials)) {
+    cache_key(training_trials = NULL, test_trials = test_trials,
+              center_lat = center_lat, center_lon = center_lon,
+              radius_km = radius_km, years = years, study_types = study_types)
+  } else {
+    cache_key(training_trials = training_trials, test_trials = test_trials)
   }
+  cache <- cache_path("ny_trials.rds")
+  hit <- cache_read(cache, key, refresh)
+  if (!is.null(hit)) return(hit)
 
   # Location metadata, with great-circle distance from the center point.
   locs <- get_locations(conn) |>
@@ -122,6 +130,6 @@ find_ny_trials <- function(conn,
   }
 
   out <- bind_rows(train, test)
-  write_rds(out, cache)
+  cache_write(cache, out, key)
   out
 }

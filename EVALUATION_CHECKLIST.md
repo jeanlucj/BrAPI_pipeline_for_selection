@@ -35,15 +35,18 @@ Bootstrap once (see `EVALUATION.md` §3), then:
   candidate set changes. All-zero sommer output ⇒ check σ²_g before suspecting the code.
 - [ ] **L8 `select`** — `TRAIT_WEIGHTS = NULL` ⇒ no `Index` column; the index is over
   **un-standardized** GEBVs, so the weights carry the unit conversion.
-- [ ] **Test suite** — `Rscript tests/run_tests.R` → `FAIL 0`, `SKIP 4`, `PASS 264`.
+- [ ] **Test suite** — `Rscript tests/run_tests.R` → `FAIL 0`, `SKIP 4`, `PASS 287`.
 
 ## Online — cached first, cheapest server work first
 
 - [ ] **L9 `connect`** — non-empty `conn$auth_token` (the only proof the login worked);
   the two `conn$login()` traps understood (silent on a bad password, prompts on empty).
-- [ ] **L10 `trials`** — every configured trial name found (a miss is only a *warning*);
-  a trial in both lists counts as **training**; `/studies` filtered client-side.
-- [ ] **L11 `phenotypes`** — `peek(pheno$pheno)`: `value` finite, **`rep`/`block` not
+- [ ] **L10 `trials`** — the trial count matches `length(TRAINING_TRIALS)`; the cache
+  either reports a hit or names what changed and rebuilds; every configured trial name
+  found (a miss is only a *warning*); a trial in both lists counts as **training**;
+  `/studies` filtered client-side.
+- [ ] **L11 `phenotypes`** — adding a trial downloads only that trial; changing
+  `TRAIT_NAMES` downloads nothing; `peek(pheno$pheno)`: `value` finite, **`rep`/`block` not
   all `NA`**; every configured trait actually has data; **zero** test-trial studies in
   `train_pheno`.
 - [ ] **L12 `coverage`** — server coverage (by `germplasmDbId`) reconciled against GRM

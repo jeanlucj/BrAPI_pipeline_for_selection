@@ -49,3 +49,53 @@ test_that("split_by_role partitions phenotypes/accessions by trial role", {
   expect_setequal(s$train_acc$germplasmName, c("A", "B"))
   expect_setequal(s$test_acc$germplasmName, c("C", "B"))  # from S2 + S3
 })
+
+# --- per-study caching --------------------------------------------------------
+# The point: adding a trial must cost one study's download, and changing the trait
+# list must cost none, because the per-study files are stored unfiltered by trait.
+
+# Each test uses its OWN study ids: the per-study cache lives in one tempdir for the
+# whole session, so ids shared with another test would arrive already cached.
+counting_conn <- function(studies) {
+  hits <- new.env(parent = emptyenv()); hits$n <- character(0)
+  units <- list(
+    unit_rec("ou1", "g1", "LINE1", rep = 1, block = 1, x = 1, y = 1,
+             traits = list("T1", "T2"), values = list(10, 20)),
+    unit_rec("ou2", "g2", "LINE2", rep = 2, block = 1, x = 2, y = 1,
+             traits = list("T1", "T2"), values = list(11, 21)))
+  conn <- fake_conn(units_by_study = setNames(rep(list(units), length(studies)), studies))
+  base_get <- conn$get
+  conn$get <- function(call, query = NULL, ...) {
+    if (grepl("/observationunits", call)) hits$n <- c(hits$n, as.character(query$studyDbId))
+    base_get(call, query = query, ...)
+  }
+  list(conn = conn, downloaded = function() hits$n)
+}
+
+test_that("adding a study downloads only that study", {
+  cc <- counting_conn(c("A1", "A2", "A3"))
+  get_phenotypes(cc$conn, c("A1", "A2"), trait_names = "T1")
+  expect_setequal(cc$downloaded(), c("A1", "A2"))
+
+  get_phenotypes(cc$conn, c("A1", "A2", "A3"), trait_names = "T1")
+  expect_equal(setdiff(cc$downloaded(), c("A1", "A2")), "A3")   # only the new one
+})
+
+test_that("changing the trait list re-filters without downloading anything", {
+  cc <- counting_conn(c("B1", "B2"))
+  ph1 <- get_phenotypes(cc$conn, c("B1", "B2"), trait_names = "T1")
+  n_after_first <- length(cc$downloaded())
+
+  ph2 <- get_phenotypes(cc$conn, c("B1", "B2"), trait_names = "T2")
+  expect_length(cc$downloaded(), n_after_first)                 # no new downloads
+  expect_setequal(ph1$pheno$trait, "T1")                        # and the filter changed
+  expect_setequal(ph2$pheno$trait, "T2")
+})
+
+test_that("an unchanged request is served from the assembled cache", {
+  cc <- counting_conn(c("C1", "C2"))
+  get_phenotypes(cc$conn, c("C1", "C2"), trait_names = "T1")
+  n <- length(cc$downloaded())
+  get_phenotypes(cc$conn, c("C1", "C2"), trait_names = "T1")    # same request
+  expect_length(cc$downloaded(), n)
+})

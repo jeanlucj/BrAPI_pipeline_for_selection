@@ -10,6 +10,7 @@ report is `analysis/brapi_selection_pipeline.Rmd`.
 | File | Function | Does |
 |------|----------|------|
 | `progress.R` | `say()`, `note()`, `note_cache()`, `step_start()`/`step_done()`, `pb_start()`/`pb_tick()`/`pb_done()`, `pb_wrap()`, `time_it()`, `print_timings()` | Console status lines, cli progress bars and per-step timings. Sourced by `config.R`, so available in every step; gated by `SHOW_PROGRESS` (default `interactive()`), overridable with `options(brapi.progress = )` |
+| `cache.R` | `cache_key()`, `cache_read()`, `cache_write()` | Request-keyed caching: a step reuses its `data/*.rds` only when it was built for the same request, else it reports what changed and rebuilds. The request is recorded in a sidecar `data/<name>.key.rds`, leaving the payload file's format untouched. Sourced by `config.R` |
 | `config.R` | (parameters), `config_lines()`, `config_traits()` | Center point/radius, years, traits, protocol, BGLR & QC settings. The long selection lists (trials, test accessions, traits + optional tab-separated weights/short names) are read from `data/config/*.txt` |
 | `01_connect.R` | `connect_t3()`, `t3_login()` | Connect to T3/Oat and log in (`T3_USERNAME`/`T3_PASSWORD` from `.Renviron`); fails fast on missing or rejected credentials |
 | `02_find_trials.R` | `find_ny_trials()` | Training trials (radius or `TRAINING_TRIALS`) + `TEST_TRIALS`, tagged by `role` |

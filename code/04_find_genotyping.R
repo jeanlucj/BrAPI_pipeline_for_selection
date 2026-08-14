@@ -691,11 +691,28 @@ find_and_get_genotypes <- function(conn, train_accessions,
                                    pedigree_df = PEDIGREE_DF,
                                    save_partials = FALSE,
                                    refresh = FALSE) {
+  # Everything that reshapes G: who we asked for, which protocol(s), the pedigree
+  # source, the EM weights, and the marker-QC/imputation settings. (The downloaded
+  # VCFs under data/vcf_cache/ are keyed by protocol/project and stay valid
+  # throughout -- a key miss here re-derives G, it does not re-download markers.)
+  key <- cache_key(train_names   = train_accessions$germplasmName,
+                   test_acc_names = test_accessions$germplasmName,
+                   test_names    = test_names,
+                   protocol_id   = protocol_id,
+                   pedigree_dir  = pedigree_dir,
+                   grm_df_mean   = grm_df_mean,
+                   grm_df_stdev  = grm_df_stdev,
+                   pedigree_df   = pedigree_df,
+                   target_density = TARGET_DENSITY,
+                   max_missing   = MAX_MISSING,
+                   min_maf       = MIN_MAF,
+                   grm_impute    = GRM_IMPUTE,
+                   grm_panel_min = GRM_PANEL_MIN,
+                   use_synonyms  = USE_SYNONYMS,
+                   seed          = SEED)
   cache <- cache_path("genotypes.rds")
-  if (!refresh && file.exists(cache)) {
-    note_cache(cache)
-    return(read_rds(cache))
-  }
+  hit <- cache_read(cache, key, refresh)
+  if (!is.null(hit)) return(hit)
 
   parts <- .genotype_partials(conn, train_accessions, test_accessions, test_names,
                               protocol_id, pedigree_dir, refresh = refresh)
@@ -711,6 +728,6 @@ find_and_get_genotypes <- function(conn, train_accessions,
               protocol_ids = parts$used,
               G            = cm$G,
               markers      = cm$markers)
-  write_rds(out, cache)
+  cache_write(cache, out, key)
   out
 }

@@ -211,15 +211,32 @@ with `options(brapi.progress = TRUE)` / `FALSE`.
 ## 6. Caching & re-runs
 
 Each data/compute step caches under `data/` (`ny_trials.rds`, `phenotypes.rds`,
-`genotypes.rds`, `gebv.rds` / `gebv_sommer.rds`) and downloaded VCFs under
-`data/vcf_cache/`. Re-runs reuse the cache; pass `refresh = TRUE` to a step (or
-delete its cache file) to recompute. **After changing `config.R` — or any
-`data/config/*.txt` list — delete the caches of the steps it affects**; most steps
-return their cached result verbatim.
-*Exception:* Stage 2 (`stage2_gblup`) validates its GEBV cache against the request
-and regenerates on its own when the relationship kernel's candidate set changes or a
-new trait is requested, so switching engine / `G` / trait set yields fresh
-predictions without re-downloading the upstream (expensive) trial and genotype data.
+`genotypes.rds`, `gebv.rds` / `gebv_sommer.rds`), downloaded VCFs under
+`data/vcf_cache/`, and raw per-study observations under `data/pheno_cache/`.
+
+**A cached result is reused only when it was produced by the same request.** Each step
+records what it was asked for (alongside its cache, in `data/<name>.key.rds`) and
+compares on the next run; if the request changed it says what changed and rebuilds:
+
+```
+data/ny_trials.rds was built for a different request -- rebuilding
+    training_trials: 3 -> 9 names (+Cornell_2024_SOAP_HR, +CU_2025_Ithaca_SOAP_HR, ...)
+```
+
+So editing `config.R` or a `data/config/*.txt` list is enough — **you do not have to
+delete caches by hand**. A cache with no recorded request (built before this existed,
+or by hand) counts as stale and is rebuilt. `refresh = TRUE` on a step, or
+`PIPELINE_REFRESH <- TRUE`, still forces a rebuild regardless.
+
+Rebuilding is cheaper than it sounds, because the two expensive downloads are cached
+at a finer grain and survive: per-study observations (`data/pheno_cache/<studyDbId>.rds`,
+stored **unfiltered by trait**, so changing `TRAIT_NAMES` costs nothing and adding a
+trial downloads only that trial) and per-project VCFs (`data/vcf_cache/`, so rebuilding
+`G` re-derives it without re-downloading markers).
+
+*Exception:* Stage 2 (`stage2_gblup`) validates by **content** rather than by request —
+it reuses its GEBV cache when the candidate set matches and it covers at least the
+requested traits, so asking for one of nine cached traits does not refit all nine.
 
 ## 7. Notes & gotchas
 

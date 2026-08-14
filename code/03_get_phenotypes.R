@@ -19,50 +19,73 @@ source(here::here("code", "01_connect.R"))
   NA_character_
 }
 
+.study_cache_path <- function(sid) cache_path("pheno_cache", paste0(sid, ".rds"))
+
+# One study's observation units, cached to data/pheno_cache/<studyDbId>.rds and
+# stored UNFILTERED by trait: the trait filter is applied at read time in
+# get_phenotypes(), so changing TRAIT_NAMES never costs a download. Mirrors the
+# per-protocol VCF cache in step 4.
+.study_observations <- function(conn, sid, refresh = FALSE) {
+  path <- .study_cache_path(sid)
+  if (!refresh && file.exists(path)) return(read_rds(path))
+
+  resp <- conn$get("/observationunits",
+                   query = list(studyDbId = sid, includeObservations = "true"),
+                   page = "all", pageSize = 500)
+  units <- resp$combined_data %||% resp$data
+  rows <- map_dfr(units, function(u) {
+    obs <- u$observations
+    if (length(obs) == 0) return(tibble())
+    pos  <- u$observationUnitPosition
+    rels <- pos$observationLevelRelationships
+    # one tibble per plot (observations vectorized) -- much faster than one
+    # tibble per observation when a study has thousands of measurements.
+    tibble(
+      studyDbId     = sid,
+      germplasmDbId = as.character(u$germplasmDbId %||% NA),
+      germplasmName = u$germplasmName %||% NA_character_,
+      obsUnitDbId   = as.character(u$observationUnitDbId %||% NA),
+      rep       = .level_code(rels, "rep"),
+      block     = .level_code(rels, "block"),
+      row       = pos$positionCoordinateY %||% NA,
+      col       = pos$positionCoordinateX %||% NA,
+      entryType = pos$entryType %||% NA_character_,
+      trait     = map_chr(obs, ~ .x$observationVariableName %||% NA_character_),
+      value     = map_dbl(obs, ~ suppressWarnings(as.numeric(.x$value %||% NA)))
+    )
+  })
+  dir.create(dirname(path), showWarnings = FALSE, recursive = TRUE)
+  write_rds(rows, path)
+  rows
+}
+
 #' Pull phenotypes and design for the given study ids.
 #'
 #' @param conn        BrAPI connection.
 #' @param study_ids   character/numeric vector of studyDbIds.
 #' @param trait_names exact observationVariableName strings to keep (empty = all
 #'   traits).
-#' @return list(pheno, design, accessions). Cached to data/phenotypes.rds.
+#' @return list(pheno, design, accessions). Cached to data/phenotypes.rds, with the
+#'   raw per-study pulls under data/pheno_cache/ (see .study_observations).
 get_phenotypes <- function(conn, study_ids,
                            trait_names = TRAIT_NAMES, refresh = FALSE) {
+  study_ids <- as.character(study_ids)
+  key   <- cache_key(study_ids = study_ids, trait_names = trait_names)
   cache <- cache_path("phenotypes.rds")
-  if (!refresh && file.exists(cache)) {
-    note_cache(cache)
-    return(read_rds(cache))
-  }
+  hit   <- cache_read(cache, key, refresh)
+  if (!is.null(hit)) return(hit)
 
-  say("Downloading observations for ", length(study_ids), " studies",
-      " (network-bound; the first run takes a while) ...")
-  rows <- map(as.character(study_ids), function(sid) {
-    resp <- conn$get("/observationunits",
-                     query = list(studyDbId = sid, includeObservations = "true"),
-                     page = "all", pageSize = 500)
-    units <- resp$combined_data %||% resp$data
-    map_dfr(units, function(u) {
-      obs <- u$observations
-      if (length(obs) == 0) return(tibble())
-      pos  <- u$observationUnitPosition
-      rels <- pos$observationLevelRelationships
-      # one tibble per plot (observations vectorized) -- much faster than one
-      # tibble per observation when a study has thousands of measurements.
-      tibble(
-        studyDbId     = sid,
-        germplasmDbId = as.character(u$germplasmDbId %||% NA),
-        germplasmName = u$germplasmName %||% NA_character_,
-        obsUnitDbId   = as.character(u$observationUnitDbId %||% NA),
-        rep       = .level_code(rels, "rep"),
-        block     = .level_code(rels, "block"),
-        row       = pos$positionCoordinateY %||% NA,
-        col       = pos$positionCoordinateX %||% NA,
-        entryType = pos$entryType %||% NA_character_,
-        trait     = map_chr(obs, ~ .x$observationVariableName %||% NA_character_),
-        value     = map_dbl(obs, ~ suppressWarnings(as.numeric(.x$value %||% NA)))
-      )
-    })
-  }, .progress = pb_wrap("Phenotypes: studies")) |>
+  # Assemble from the per-study caches, downloading only the studies we lack. So
+  # adding a trial costs one study's download, not the whole set -- and changing
+  # TRAIT_NAMES costs nothing at all, because the per-study files are unfiltered.
+  cached <- map_lgl(study_ids, ~ file.exists(.study_cache_path(.x)) && !refresh)
+  if (any(!cached)) {
+    say("Downloading observations for ", sum(!cached), " of ", length(study_ids),
+        " studies (network-bound; the first run takes a while) ...")
+  }
+  if (any(cached)) note(sum(cached), " study/studies already cached")
+  rows <- map(study_ids, ~ .study_observations(conn, .x, refresh = refresh),
+              .progress = pb_wrap("Phenotypes: studies")) |>
     list_rbind()
 
   if (length(trait_names) > 0 && nrow(rows) > 0) {
@@ -82,7 +105,7 @@ get_phenotypes <- function(conn, study_ids,
     filter(!is.na(germplasmDbId))
 
   out <- list(pheno = pheno, design = design, accessions = accessions)
-  write_rds(out, cache)
+  cache_write(cache, out, key)
   out
 }
 

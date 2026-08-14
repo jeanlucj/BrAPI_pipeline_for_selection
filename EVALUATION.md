@@ -484,6 +484,20 @@ dplyr::filter(trials, is.na(distance_km))  # explicit trials with no coordinates
 - **🔍 eyeball** every configured trial name appears. A name not found on the server is a
   **warning**, not an error — read the console, because the run continues with fewer
   training trials than you asked for.
+- **🔍 eyeball** the cache line. Either `using cached data/ny_trials.rds …` — in which
+  case it was built for **this** request — or a `built for a different request —
+  rebuilding` message naming what changed. Both are informative; silence would not be.
+  Verify the invalidation works while you are here:
+  ```r
+  find_ny_trials(conn, training_trials = head(TRAINING_TRIALS, 2))   # must rebuild
+  find_ny_trials(conn)                                              # must rebuild back
+  find_ny_trials(conn)                                              # must now hit cache
+  ```
+- **🚩 red flag** a step returning trials you did not configure. That was the pre-keying
+  failure: the cache filename was the whole key, so `TRAINING_TRIALS` could change from
+  3 names to 9 and `find_ny_trials()` would keep handing back the old three forever. If
+  you ever see a count that disagrees with `length(TRAINING_TRIALS)`, check the sidecar
+  (`readRDS(cache_key_file(cache_path("ny_trials.rds")))`) before anything else.
 - **🚩 red flag** `/studies` **ignores a server-side `locationDbId` filter**, so every
   study is pulled and filtered client-side. If you ever "optimize" that into a server
   query, the filter will appear to work and quietly return everything.
@@ -507,6 +521,10 @@ length(intersect(sets$train_pheno$studyDbId,
 
 - **→ returns** `pheno` = `list(pheno, design, accessions)`; `sets` =
   `train_pheno / train_acc / test_acc`.
+- **🔍 eyeball** the cache lines: studies already in `data/pheno_cache/` are reused and
+  only genuinely new ones download, so a re-run after adding one trial should report
+  one download, not the whole set. Changing `TRAIT_NAMES` must download **nothing** —
+  the per-study files are stored unfiltered and the trait filter is applied at read time.
 - **🔍 eyeball** `peek(pheno$pheno)` — `value` finite, and **`rep`/`block` not all
   `NA`** (they can legitimately be absent, but all-`NA` means Stage 1 silently degrades
   to plot means: the canonical subtle bug). `count(trait)` should show only your
@@ -638,18 +656,21 @@ source(here::here("code", "run_pipeline.R"))
 
 ## 5. Fast → slow within the live layer
 
-| Cache | Written by | Cost to rebuild | Invalidated by |
+| Cache | Written by | Cost to rebuild | Keyed on (a change here rebuilds it) |
 |----|----|----|----|
-| `data/ny_trials.rds` | step 02 | seconds–a minute (2 paged GETs) | trial config, radius/year/type settings |
-| `data/phenotypes.rds` | step 03 | **~30 min** for all NY-region trials | the trial set, `TRAIT_NAMES` |
-| `data/synonym_map.rds` | `synonyms.R` | one `/search/germplasm` call | the accession set |
+| `data/ny_trials.rds` | step 02 | seconds–a minute (2 paged GETs) | `TRAINING_TRIALS`, `TEST_TRIALS`; + radius/year/type **only** in radius mode |
+| `data/pheno_cache/<sid>.rds` | step 03 | one study's download | nothing — one file per study, **unfiltered by trait**, reused forever |
+| `data/phenotypes.rds` | step 03 | seconds from the per-study files | the study set, `TRAIT_NAMES` |
+| `data/synonym_map.rds` | `synonyms.R` | one `/search/germplasm` call | the accession name set, `USE_SYNONYMS` |
 | `data/vcf_cache/*.vcf` | step 04 | minutes to **hours** (GB-scale GBS files) | nothing — keyed by protocol/project, reused forever |
-| `data/genotypes.rds` | step 04 | minutes (cached VCFs) to hours (cold) | the accession set, `GENO_PROTOCOL_ID`, EM df, `PEDIGREE_DIR` |
-| `data/gebv.rds` / `gebv_sommer.rds` | step 06 | minutes per trait | validated automatically against `G`'s candidates + requested traits |
+| `data/genotypes.rds` | step 04 | minutes (cached VCFs) to hours (cold) | the accessions, `GENO_PROTOCOL_ID`, `PEDIGREE_DIR`, EM df, marker QC/impute, `SEED` |
+| `data/gebv.rds` / `gebv_sommer.rds` | step 06 | minutes per trait | validated by **content**: `G`'s candidate set + the requested traits |
 
-Two rules: **deleting one cache forces every downstream step**, and only Stage 2
-validates its own cache — the rest hand back whatever is on disk, so after changing
-`config.R` or a `data/config/*.txt` list, delete the caches of the steps it affects.
+Each step records its request in a sidecar `data/<name>.key.rds` and rebuilds when it
+differs — so **you do not delete caches by hand**; change the config and the affected
+steps rebuild themselves, saying what changed. Two things worth knowing while
+evaluating: **deleting one cache forces every downstream step**, and a cache with **no
+sidecar** (built by hand, or before this mechanism) is treated as stale and rebuilt.
 
 ------------------------------------------------------------------------
 
@@ -671,6 +692,7 @@ validates its own cache — the rest hand back whatever is on disk, so after cha
 | `rep`/`block` all `NA` | Stage 1 silently degraded to plot means | `peek(pheno$pheno)` |
 | combined `G` one row/col too big | the EM phantom variable was not dropped | L4 |
 | pedigree silently absent | a missing sibling-repo companion file degrades gracefully | L13 |
+| a step returns results that do not match the current config | a cache served for a *different* request — the failure request-keying exists to prevent | the sidecar: `readRDS(cache_key_file(cache_path("<name>.rds")))`; L10 |
 | CV accuracy high on a trait with few phenotyped genotypes | too little data for the correlation to mean anything | `cv` table at L15 |
 
 The meta-rule, worth more than any single check: **trust agreement between two
@@ -687,7 +709,7 @@ RUN_LIVE_TESTS=true Rscript tests/run_tests.R   # also tier 3 (needs .Renviron c
 
 | Command | Expected |
 |----|----|
-| `tests/run_tests.R` | `FAIL 0`, `WARN 0`, `SKIP 4`, `PASS 264` — the 4 skips are the live tier |
+| `tests/run_tests.R` | `FAIL 0`, `WARN 0`, `SKIP 4`, `PASS 287` — the 4 skips are the live tier |
 | with `RUN_LIVE_TESTS=true` and credentials | the same, with the 4 live tests running instead of skipping |
 | with `RUN_LIVE_TESTS=true` and **no** credentials | still 4 skips, not 4 errors |
 

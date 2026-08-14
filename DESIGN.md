@@ -37,6 +37,11 @@ analysis/brapi_selection_pipeline.Rmd   orchestrates 01..07 into a workflowr rep
 ```
 
 Shared helpers:
+- `code/cache.R` — request-keyed caching (`cache_key`, `cache_read`, `cache_write`).
+  Each step records the request that produced its `data/*.rds` in a sidecar
+  `data/<name>.key.rds`; a differing or missing key means rebuild, so a config change
+  invalidates the affected caches automatically instead of relying on the user to
+  delete them. Step 06 opts out (it validates by content, superset-tolerant over traits).
 - `code/progress.R` — the console reporting layer: status lines (`say`, `note`,
   `note_cache`), step banners with elapsed time (`step_start`/`step_done`,
   `print_timings`), and cli progress bars (`pb_start`/`pb_tick`/`pb_done`,

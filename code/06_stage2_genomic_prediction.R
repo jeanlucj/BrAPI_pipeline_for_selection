@@ -147,6 +147,13 @@ stage2_gblup <- function(blues, geno, traits = NULL, engine = MIXED_MODEL_ENGINE
   relmat <- .geno_kernel(geno)
   if (is.null(traits)) traits <- unique(blues$trait)
 
+  # NB this step deliberately does NOT use the request-keyed cache (code/cache.R) that
+  # steps 2/3/4 share. Its rule is superset-tolerant on purpose -- a cache covering all
+  # nine traits still serves a request for one of them -- and strict key equality would
+  # throw that away and refit. Validating against the CONTENT is also stronger here:
+  # it compares the cached genotypes to the kernel actually in hand, so a rebuilt G
+  # invalidates the GEBVs even if every parameter looks identical.
+  #
   # The cache exists to skip recomputation, NOT to serve stale predictions: reuse it
   # only when it still matches the current request -- same candidate set as the
   # relationship kernel AND covering every requested trait. A resized/regenerated G
