@@ -1,7 +1,8 @@
 # BACKGROUND
 
 The theory behind the methods and the reasoning behind the design decisions. For
-usage see [README.md](README.md); for structure see [DESIGN.md](DESIGN.md).
+usage see [README.md](README.md); for structure see [DESIGN.md](DESIGN.md); to check
+these decisions against the running code see [EVALUATION.md](EVALUATION.md).
 
 ## The breeding question
 

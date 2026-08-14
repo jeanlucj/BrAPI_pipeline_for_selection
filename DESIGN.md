@@ -2,7 +2,8 @@
 
 What this pipeline is and how it is put together. For usage see
 [README.md](README.md); for the reasoning behind the methods see
-[BACKGROUND.md](BACKGROUND.md).
+[BACKGROUND.md](BACKGROUND.md); to step through and validate it module by module see
+[EVALUATION.md](EVALUATION.md).
 
 ## Purpose
 

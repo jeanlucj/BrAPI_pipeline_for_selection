@@ -9,9 +9,10 @@ A pipeline that pulls oat data from **T3/Oat** (`oat.triticeaetoolbox.org`) over
 parents for crossing for the **New York** environment. It is a
 [workflowr](https://github.com/workflowr/workflowr) project.
 
-Three living docs describe it; **keep them current when you change the pipeline**
-(see `README.md` = usage, `DESIGN.md` = structure/data objects, `BACKGROUND.md` =
-theory + design rationale, `code/README.md` = per-file function reference).
+Living docs describe it; **keep them current when you change the pipeline**
+(`README.md` = usage, `DESIGN.md` = structure/data objects, `BACKGROUND.md` =
+theory + design rationale, `code/README.md` = per-file function reference,
+`EVALUATION.md` + `EVALUATION_CHECKLIST.md` = the module-by-module validation runbook).
 
 ## Commands
 
@@ -59,6 +60,15 @@ config.R          parameters sourced by every step; the long selection lists
 Shared: `grm_utils.R` (`.Gmatrix`, `std_grm`), `em_covariance_combiner.R`
 (`EMCovarianceCombiner`, copied verbatim from `../T3Predictathon2026`), and
 `progress.R` (console reporting).
+
+`code/evaluation.R` is **not** part of the pipeline and is deliberately not sourced by
+`config.R`: it is the evaluation-time tooling behind `EVALUATION.md` —
+`arm_evaluation(group)`/`disarm_evaluation()` (`debug()` a whole module at once),
+`eval_groups()`, `armed_functions()`, and `peek(x)` (one-line health summary of a pheno
+tibble / dosage matrix / GRM / BLUEs / GEBVs, returned unchanged). A function left
+armed blocks the next unattended run on the debugger prompt. When you add a function
+worth stepping through, add its name to the right `EVAL_GROUPS` entry —
+`tests/testthat/test-01-evaluation.R` fails if a name there stops resolving.
 
 Things that require reading several files to grasp:
 - **All console reporting goes through `code/progress.R`** (`say`/`note`/`note_cache`

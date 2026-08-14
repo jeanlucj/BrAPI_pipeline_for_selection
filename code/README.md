@@ -21,6 +21,7 @@ report is `analysis/brapi_selection_pipeline.Rmd`.
 | `05_stage1_blues.R` | `stage1_blues()` | Per-trial BLUEs (lme4) with weights |
 | `06_stage2_genomic_prediction.R` | `stage2_gblup()`, `cv_accuracy()` | Genomic prediction (RKHS on the combined GRM) → GEBVs; `engine = "bglr"` (Bayesian, default) or `"sommer"` (REML GBLUP, cross-check) |
 | `07_select.R` | `select_parents()` | Un-standardized weighted selection index → two-block `breeders_output.csv` (per-accession GEBVs+index; per-trait weight+CV accuracy) |
+| `evaluation.R` | `arm_evaluation()`/`disarm_evaluation()`, `eval_groups()`, `armed_functions()`, `peek()` | Evaluation-time tooling for `EVALUATION.md`: `debug()` a named group of functions, and print one-line health summaries of the objects flowing between steps. **Not sourced by the pipeline** — load it by hand, and disarm before any unattended run |
 | `run_pipeline.R` | (script) | Interactive driver: sources + runs steps 1–7 in order so the download/EM progress bars are visible (set `PIPELINE_REFRESH <- TRUE` to force fresh runs) |
 
 Each data-pulling/compute step caches its result under `data/` (e.g.

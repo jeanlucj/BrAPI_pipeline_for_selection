@@ -8,6 +8,8 @@ growing environment.
 - **How to use it** → this file.
 - **What it is / how it's structured** → [DESIGN.md](DESIGN.md).
 - **Why it works the way it does (theory + decisions)** → [BACKGROUND.md](BACKGROUND.md).
+- **How to validate it, module by module** → [EVALUATION.md](EVALUATION.md), with
+  [EVALUATION_CHECKLIST.md](EVALUATION_CHECKLIST.md) to tick off.
 
 This is a [workflowr](https://github.com/workflowr/workflowr) project: reusable
 functions live in `code/`, the runnable report in `analysis/`, cached pulls in
