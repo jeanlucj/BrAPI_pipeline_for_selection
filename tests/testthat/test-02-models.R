@@ -196,3 +196,54 @@ test_that("find_and_get_genotypes injects ungenotyped training, drops ungenotype
   expect_true(all(geno$G["GHOST", others] == 0))
   expect_null(geno$markers)                              # injection -> markers dropped
 })
+
+# --- Oracle: does Stage 2 actually recover known breeding values? -------------
+# Everything above checks shapes and plumbing. This checks the ANSWER, against a
+# simulated population where the true genetic values are known (simulate_trials()
+# in helper-setup.R). It is the regression that catches a kernel silently decoupled
+# from the phenotypes -- shapes stay perfect while accuracy collapses to zero.
+# Kept small (100 lines x 500 markers) so the suite stays fast.
+
+test_that("both engines recover the true genetic values on held-out lines", {
+  sim <- simulate_trials(n_acc = 100, n_mrk = 500, h2 = 0.5, n_trials = 2,
+                         n_founders = 10, n_fam = 10, seed = 11)
+  bl  <- suppressMessages(stage1_blues(sim$ph))
+  G   <- std_grm(.Gmatrix(sim$D))
+
+  # Stage 1 must recover g WITHIN a trial before Stage 2 can do anything (pooling
+  # across trials mixes in the trial means, so it is not the right comparison).
+  within <- bl |>
+    dplyr::group_by(studyDbId) |>
+    dplyr::summarise(r = cor(BLUE, sim$g[genotype]), .groups = "drop")
+  expect_true(all(within$r > 0.6))
+
+  gebv <- stage2_gblup(bl, list(G = G), nIter = 1500, burnIn = 500, refresh = TRUE)
+  gs   <- stage2_gblup(bl, list(G = G), engine = "sommer", refresh = TRUE)
+
+  # A zero variance component would give sommer BLUPs of exactly 0; with real signal
+  # it must not, and the two engines must agree closely on the same kernel.
+  expect_false(all(gs$GEBV == 0))
+  expect_gt(cor(gebv$GEBV, gs$GEBV), 0.95)
+
+  # The honest number: lines in G that were never phenotyped.
+  ho <- gebv$genotype %in% sim$unphenotyped
+  expect_gt(sum(ho), 0)
+  expect_gt(cor(gebv$GEBV[ho], sim$g[gebv$genotype[ho]]), 0.25)
+  expect_gt(cor(gs$GEBV[ho],   sim$g[gs$genotype[ho]]),   0.25)
+
+  # cv_accuracy() is the only one of these available on real data, so it must be in
+  # the same neighbourhood as the held-out truth rather than telling its own story.
+  cv <- cv_accuracy(bl, list(G = G), "Yield", nIter = 800, burnIn = 200)
+  expect_gt(cv$accuracy, 0.25)
+})
+
+test_that("an unrelated population cannot predict held-out lines (fixture sanity)", {
+  # make_dosage() draws every line independently: GRM off-diagonals ~ 0, so a
+  # held-out line is unpredictable BY CONSTRUCTION however correct the code is.
+  # This pins the distinction, so a future zero-accuracy result is diagnosable.
+  sim <- simulate_trials(n_acc = 60, n_mrk = 300, h2 = 0.5, seed = 12)
+  D_unrel <- make_dosage(60, 300, seed = 12)
+  dimnames(D_unrel) <- dimnames(sim$D)
+  off <- function(D) { G <- std_grm(.Gmatrix(D)); mean(abs(G[upper.tri(G)])) }
+  expect_lt(off(D_unrel), off(sim$D))
+})

@@ -24,14 +24,18 @@ Bootstrap once (see `EVALUATION.md` §3), then:
 - [ ] **L5 `markers`** — markers keyed **`CHROM_POS`** (`1_100`…), not the VCF `ID`;
   QC drops markers *before* accessions; `peek(dos, accessions=)` raises the zero-overlap
   alarm on a deliberate mismatch.
-- [ ] **L6 `stage1`** — `weight = 1/SE²` spans a sane range; skipped trait×study cells
-  are read and understood; check whether `SE_FLOOR_FRAC` is currently doing any work.
-- [ ] **L7 `stage2` + `cv`** — GEBVs **shrunk**, not on the phenotype scale (the
+- [ ] **L6 `stage1`** — on `simulate_trials()`: within-trial `cor(BLUE, true g)` ≈ 0.82
+  (theory: `sqrt(h²/(h² + (1−h²)/n_rep))`); `weight = 1/SE²` spans a sane range; no lme4
+  `degenerate Hessian` warning; skipped trait×study cells read and understood; check
+  whether `SE_FLOOR_FRAC` is currently doing any work.
+- [ ] **L7 `stage2` + `cv`** — `G` built from **`sim$D`**; both engines **non-zero** and
+  agreeing (~0.998); held-out `cor(GEBV, true g)` ≈ 0.49 and `cv_accuracy()` ≈ 0.52 land
+  in the same neighbourhood; GEBVs **shrunk**, not on the phenotype scale (the
   weighted-RKHS trap); `sqrt(w)` passed to BGLR; the cache **regenerates** when `G`'s
-  candidate set changes.
+  candidate set changes. All-zero sommer output ⇒ check σ²_g before suspecting the code.
 - [ ] **L8 `select`** — `TRAIT_WEIGHTS = NULL` ⇒ no `Index` column; the index is over
   **un-standardized** GEBVs, so the weights carry the unit conversion.
-- [ ] **Test suite** — `Rscript tests/run_tests.R` → `FAIL 0`, `SKIP 4`, `PASS 256`.
+- [ ] **Test suite** — `Rscript tests/run_tests.R` → `FAIL 0`, `SKIP 4`, `PASS 264`.
 
 ## Online — cached first, cheapest server work first
 

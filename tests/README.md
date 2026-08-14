@@ -23,11 +23,15 @@ Or from R: `testthat::test_dir(here::here("tests","testthat"))`.
   roles + multi-type, via a fake connection), phenotype/design extraction with exact
   `trait_names` matching + `split_by_role`, Stage-1 BLUEs, the Stage-2 helpers, and
   `select_parents` (un-standardized index + two-block `breeders_output.csv`).
-- **Tier 2 — `test-02-models.R` (offline, heavier ~1 s).** Runs the real models on
-  synthetic data: BGLR RKHS prediction + cross-validation, and a fully *mocked*
+- **Tier 2 — `test-02-models.R` (offline, heavier).** Runs the real models on
+  synthetic data: BGLR prediction + cross-validation, and a fully *mocked*
   `find_and_get_genotypes` exercising the multi-protocol EM-combine, single-protocol,
   prediction-target subsetting, pedigree-bridged test accessions, and training
-  injection paths (synthetic VCFs, no network).
+  injection paths (synthetic VCFs, no network). It ends with an **oracle** test built on
+  `simulate_trials()`: a related population with known true breeding values, where both
+  engines must recover those values on *held-out* lines and agree with each other. That
+  is the regression that catches a kernel silently decoupled from the phenotypes — every
+  shape stays correct while accuracy collapses to zero.
 - **Tier 3 — `test-03-live.R` (network + downloads, opt-in).** Hits T3/Oat:
   connect, find NY trials, pull phenotypes, build a GRM from the Oat 3K protocol.
   Skipped unless `RUN_LIVE_TESTS` is set **and** `T3_USERNAME`/`T3_PASSWORD` are
@@ -38,6 +42,10 @@ Or from R: `testthat::test_dir(here::here("tests","testthat"))`.
 `helper-setup.R` sources `code/` once, redirects `cache_path()`/`output_path()` to a
 tempdir (so tests never touch `data/`/`output/`), sets
 `options(brapi.progress = FALSE)` so no test run is narrated, and provides the
-synthetic-data
+synthetic-data builders — including `simulate_trials()`, which generates a **related**
+population of inbred lines (founders → biparental crosses → doubled haploids), gives
+every marker an effect, and derives phenotypes from the resulting genetic values, so
+that the marker GRM is the correct kernel and Stage 2 has real signal to find (and a
+known answer to be checked against) — and the synthetic-data
 and mock-connection builders (`write_test_vcf`, `make_dosage`, `fake_conn`, …). Tests
 pass `refresh = TRUE` so cached results are not reused.

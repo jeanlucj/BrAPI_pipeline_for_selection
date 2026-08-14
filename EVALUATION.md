@@ -115,7 +115,7 @@ already provides — no new fixtures, no network:
 source(here::here("tests", "testthat", "helper-setup.R"))   # make_dosage, write_test_vcf, fake_conn
 ```
 
-> **Caveat, and it matters:** `helper-setup.R` redirects `cache_path()` and
+> **Caveat** `helper-setup.R` redirects `cache_path()` and
 > `output_path()` to a tempdir so tests never touch `data/`. That is exactly what you
 > want offline — but it means an online level run afterwards would read and write the
 > *wrong* cache. Before the online levels, restore them with
@@ -211,7 +211,9 @@ peek(Gs); identical(i1, i2); anyNA(i1)
 - **🔍 eyeball** the **raw** diagonal mean is **1.308** here and `std_grm()` takes it to
   exactly 1. On real inbred oat data the raw VanRaden diagonal is `1 + F` and should sit
   comfortably **above 1** — a raw diagonal near 1.0 on real data is suspicious, not
-  reassuring.
+  reassuring. To see that directly, build a GRM from the *inbred* population L6 uses:
+  `mean(diag(.Gmatrix(simulate_trials(seed = 1)$D)))` is **exactly 2.0**, i.e. `F = 1`
+  for fully homozygous lines.
 - **🚩 red flag** `.impute_glmnet` not reproducible across calls (it fixes its CV folds
   deterministically on purpose); a diagonal mean of exactly 1 where you expected a *raw*
   GRM (something already standardized it); dosages outside `{0,1,2}` — `.Gmatrix()`'s
@@ -287,25 +289,58 @@ peek(dos, accessions = c("NOPE1"))      # overlap 0 -> the mismatch alarm
   keeping every *n*-th variant line. That is uniform in *position*, not in linkage — fine
   for a GRM, wrong if you ever want specific markers.
 
-### L6 — `stage1` (offline; where the weights are born)
+### L6 — `stage1` (offline; where the weights are born, and where truth is defined)
+
+The fixture from here on is a **simulated population with a known answer**, because
+L7's whole job is to decide whether Stage 2 is right, and you cannot do that without
+knowing what right is. `simulate_trials()` (`tests/testthat/helper-setup.R`) builds:
+
+- **a related population** — `n_fam` biparental crosses among `n_founders` founders,
+  doubled-haploid progeny, so dosages are 0/2 (oat lines are essentially homozygous) and
+  lines from one cross share about half their genome;
+- **a genetic value per line**, `g = Wβ` with **every marker causal** (`β ~ N(0,1)`, `W`
+  the centred dosage), rescaled so `var(g) = h²`;
+- **phenotypes** `y = μ + trial + rep + block + g + e`, `var(e) = 1 − h²`, in a
+  randomized incomplete-block design;
+- **a held-out fraction** (`prop_unphenotyped`) present in the markers but in **no
+  trial** — genuinely unphenotyped candidates whose true `g` you nonetheless know.
 
 ``` r
 arm_evaluation("stage1")
-set.seed(1)
-ph <- tidyr::expand_grid(studyDbId = c("s1","s2"), germplasmName = paste0("L", 1:12),
-                         rep = 1:2) |>
-  dplyr::mutate(block = 1, trait = "Yield", value = rnorm(dplyr::n(), 100, 10))
-bl <- stage1_blues(ph)
+sim <- simulate_trials(n_acc = 200, n_mrk = 2000, h2 = 0.5, n_trials = 2, seed = 1)
+bl  <- stage1_blues(sim$ph)
 disarm_evaluation()
-peek(bl)
+peek(sim$ph); peek(bl)
+length(sim$unphenotyped); var(sim$g)
+cor(bl$BLUE, sim$g[bl$genotype])                          # pooled: LOW, and that is correct
+bl |> dplyr::group_by(studyDbId) |>
+  dplyr::summarise(cor = cor(BLUE, sim$g[genotype]))      # within trial: ~0.81, ~0.83
 ```
 
-- **→ returns** 24 rows (12 genotypes × 2 studies) with `trait, studyDbId, genotype,
-  BLUE, SE, weight`. Here `SE` ≈ 3.7–6.3 and `weight = 1/SE²` ≈ 0.025–0.072.
+- **→ returns** `sim$ph` is 640 rows (160 phenotyped lines × 2 trials × 2 reps), 40 lines
+  held out, `var(sim$g)` exactly `h²` = 0.5. `bl` is 320 rows (160 genotypes × 2 studies)
+  with `SE` ≈ 0.66–0.68 and `weight = 1/SE²` ≈ 2.15–2.26.
+- **🔍 eyeball** the **within-trial** correlation between BLUE and the true `g` is
+  ~0.81–0.83, which is what theory says it should be: with `h² = 0.5` and 2 reps,
+  `sqrt(0.5 / (0.5 + 0.5/2))` ≈ 0.82. If Stage 1 is not recovering `g` this well, nothing
+  in L7 is interpretable and the problem is *here*.
+- **🔍 eyeball** the **pooled** correlation is much lower (~0.41) — and that is not a bug.
+  Pooling BLUEs across trials mixes in the trial means, which have nothing to do with `g`.
+  It is precisely why Stage 2 removes environment main effects before averaging
+  (`.genotype_means()`; on this fixture that lifts the correlation to ~0.90).
 - **🔍 eyeball** `peek(bl)` prints the **weight range**. Healthy weights span perhaps an
   order of magnitude. Watch for the trait×study cells that were *skipped* (`<2
   genotypes`, constant response, or a fit error) — those messages are the only sign that
   part of your data never entered the model.
+- **🚩 red flag** lme4 warning `degenerate Hessian with 1 negative eigenvalue`. In a
+  simulated design that usually means a design factor is **confounded with genotype** —
+  e.g. every line sitting in the same block in every rep, so the block variance is not
+  identifiable. `simulate_trials()` re-randomizes blocks within each trial × rep to
+  avoid exactly that; a real trial with that structure gives the same warning and the
+  same unusable block term.
+- *Assumption:* every marker is causal and all effects are additive, so a VanRaden GRM is
+  **exactly** the right kernel for this trait. Real traits are not like this — the fixture
+  is deliberately the easy case, so that a failure in L7 is unambiguous.
 - **🚩 red flag** a weight range spanning **>1e6**. A trial that fits (near-)perfectly —
   duplicated records, a degenerate design — drives its residual variance toward 0, every
   SE toward 0 and `1/SE²` toward `Inf`, letting that one trial dominate Stage 2 entirely.
@@ -319,23 +354,49 @@ peek(bl)
 
 ### L7 — `stage2` + `cv` (offline; the scaling crux)
 
+`G` is built from **`sim$D`** — the same markers that generated the phenotypes. That is
+the whole point: build it from any other `make_dosage()` call and the kernel and the
+trait are decoupled, so nothing below means anything.
+
 ``` r
 arm_evaluation("stage2")
-G <- std_grm(.Gmatrix(make_dosage(12, 200, seed = 5)))
-rownames(G) <- colnames(G) <- paste0("L", 1:12)
-gebv <- stage2_gblup(bl, list(G = G), nIter = 1200, burnIn = 200, refresh = TRUE)
+G    <- std_grm(.Gmatrix(sim$D))
+gebv <- stage2_gblup(bl, list(G = G), nIter = 3000, burnIn = 1000, refresh = TRUE)
+gs   <- stage2_gblup(bl, list(G = G), engine = "sommer", refresh = TRUE)
 disarm_evaluation()
-peek(gebv)
-cv <- cv_accuracy(bl, list(G = G), "Yield", nIter = 600, burnIn = 100); cv
+peek(gebv); peek(gs)
+cor(gebv$GEBV, gs$GEBV)                                     # engines agree?      ~0.998
+cor(gebv$GEBV, sim$g[gebv$genotype])                        # vs TRUTH, all       ~0.82
+ho <- gebv$genotype %in% sim$unphenotyped                   # the honest number
+cor(gebv$GEBV[ho], sim$g[gebv$genotype[ho]])                #                     ~0.49
+cv <- cv_accuracy(bl, list(G = G), "Yield", nIter = 600, burnIn = 100); cv   #    ~0.52
 ```
 
 - **→ returns** one row per candidate per trait (`trait, genotype, GEBV, phenotyped`);
-  `cv` is a one-row tibble `trait, k, n, accuracy`. On this **random** fixture the
-  accuracy is near zero (≈ −0.23) — that is the correct answer for data with no signal.
-- **🔍 eyeball** `peek(gebv)` reports **predicted-only** count — candidates in `G` that
-  were never phenotyped. On the synthetic fixture that is 0 and `peek` says so; on a real
-  run it should be large, because predicting un-phenotyped accessions is the entire
-  point. GEBVs should be **shrunk** relative to the phenotype scale.
+  `cv` is a one-row tibble `trait, k, n, accuracy`. Both engines return **non-zero**
+  GEBVs, correlated with each other at ~0.998.
+- **🔍 eyeball** `peek(gebv)` reports **predicted-only** = 40 of 200 — the held-out lines,
+  present in `G` but in no trial. That is the case that matters in production, and it is
+  the only one where accuracy is not inflated by the line's own phenotype.
+- **🔍 eyeball** **four numbers that should tell one story**: engine-vs-engine (~0.998),
+  GEBV-vs-truth over all lines (~0.82, flattered by the phenotyped 80%), GEBV-vs-truth on
+  the **held-out** lines (~0.49), and `cv_accuracy()` (~0.52). The last two should land in
+  the same neighbourhood — that is the check that tells you whether `cv_accuracy()`, the
+  only one of the four available on real data, can be trusted.
+- **🚩 red flag — the one that motivated this fixture.** **sommer GEBVs all exactly 0.**
+  REML has put σ²_g on the boundary: the kernel explains none of the phenotypic variance,
+  so the BLUPs collapse to zero. On *this* fixture that is a failure. On signal-free data
+  it is the **correct** answer — and BGLR cannot reproduce it, because its prior keeps
+  σ²_g strictly positive, so it always returns something non-zero. A BGLR-vs-sommer
+  "disagreement" therefore means nothing until you have confirmed σ²_g > 0: check the
+  variance components with `code/engine_compare.R` (§9) before concluding anything.
+- **🚩 red flag** held-out accuracy near zero **while** the phenotyped lines look fine.
+  Either the kernel and the phenotypes are decoupled (a different `make_dosage()` call),
+  or the population has no structure to exploit: markers drawn independently per line
+  leave every GRM off-diagonal ≈ 0, and an unrelated line is unpredictable **by
+  construction**, however correct the code is. `simulate_trials()` builds a
+  founder/family population precisely so this number can be non-zero — check
+  `range(G[upper.tri(G)])` (here ≈ −0.21 … 0.64) before blaming Stage 2.
 - **🚩 red flag — the big one.** Stage 2 fits kernel GBLUP as **BRR on the relationship
   eigen-factor**, deliberately *not* BGLR's `model = "RKHS"`. RKHS's eigendecomposition
   shortcut assumes iid residuals, so with our `1/SE²` weights it inflates GEBVs ~λ-fold.
@@ -347,14 +408,19 @@ cv <- cv_accuracy(bl, list(G = G), "Yield", nIter = 600, burnIn = 100); cv
 - **🚩 red flag** a stale cache serving the wrong candidates. `stage2_gblup` reuses
   `data/gebv.rds` **only** when its genotype set equals `rownames(relmat)` *and* it
   covers every requested trait — resize `G` or add a trait and it must regenerate even
-  with `refresh = FALSE`. Verify that: `stage2_gblup(bl, list(G = G[1:8, 1:8]))` must not
-  return 12 genotypes.
+  with `refresh = FALSE`. Verify that: `stage2_gblup(bl, list(G = G[1:50, 1:50]))` must
+  come back with 50 genotypes, not the cached 200.
 - *Assumption:* prediction is **always** kernel-based; there is no marker-effect
   (BRR/BayesB-on-markers) path, so single-protocol and EM-combined runs are handled
   identically. `geno$markers` exists only to build a kernel when `G` is absent.
 - *Assumption (performance, not correctness):* `eigen(relmat)` is recomputed inside
   **every** trait fit and **every** CV fold — 9 traits × 5 folds is 45+ decompositions of
   the same matrix. Expect the wait; it is not a hang.
+
+The independent oracles for this level are `code/engine_compare.R` (variance components
+plus a hand-computed GBLUP at fixed variances — whichever engine fails to reproduce the
+hand solution is the broken one), `code/compare_sommer_bglr.R` (the same comparison on
+the real cached data) and `code/bglr_rkhs_vs_brr.R` (RKHS vs BRR under weights). See §9.
 
 ### L8 — `select` (offline, instant)
 
@@ -593,6 +659,8 @@ validates its own cache — the rest hand back whatever is on disk, so after cha
 |----|----|----|
 | GEBVs on roughly the phenotype scale, not shrunk | weighted **RKHS** instead of BRR on the eigen-factor — inflated ~λ-fold | `code/bglr_rkhs_vs_brr.R`; L7 |
 | GEBVs off by a smooth factor vs sommer | BGLR `weights` are inverse **SDs**; passing precision `w` instead of `sqrt(w)` | `code/engine_compare.R`, `compare_sommer_bglr.R` |
+| **sommer GEBVs all exactly 0** while BGLR is non-zero | REML put σ²_g on the boundary — the kernel explains nothing. Correct behaviour on signal-free data; BGLR's prior cannot return exactly 0, so the engines *always* look like they disagree there | L7 on `simulate_trials()`; variance components via `engine_compare.R` |
+| held-out accuracy ≈ 0 while phenotyped lines look fine | no relatedness to exploit (GRM off-diagonals ≈ 0), or the kernel and phenotypes are decoupled | `range(G[upper.tri(G)])`; L7 |
 | non-empty dosage matrix, **zero rowname overlap** | synonym / name mismatch (VCF under a preliminary name) | `peek(dos, accessions=)`; `match_diagnostic.R` |
 | coverage count ≫ accessions in `G` | the dbId-vs-name seam, or the archived VCF is thinner than the server claims | `match_diagnostic.R`, `coverage_diagnostic.R` |
 | every accession ~50% missing after merge | markers keyed by VCF `ID` instead of canonical `CHROM_POS`; or QC dropped accessions before markers | L5 |
@@ -619,7 +687,7 @@ RUN_LIVE_TESTS=true Rscript tests/run_tests.R   # also tier 3 (needs .Renviron c
 
 | Command | Expected |
 |----|----|
-| `tests/run_tests.R` | `FAIL 0`, `WARN 0`, `SKIP 4`, `PASS 256` — the 4 skips are the live tier |
+| `tests/run_tests.R` | `FAIL 0`, `WARN 0`, `SKIP 4`, `PASS 264` — the 4 skips are the live tier |
 | with `RUN_LIVE_TESTS=true` and credentials | the same, with the 4 live tests running instead of skipping |
 | with `RUN_LIVE_TESTS=true` and **no** credentials | still 4 skips, not 4 errors |
 

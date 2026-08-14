@@ -1250,3 +1250,9 @@ Also relevant for a replication: `EVALUATION.md` §10 step 5 closes the loop bet
 12. Separate `EVALUATION_CHECKLIST.md` carrying the `- [ ]` sign-off, tiered offline→online, one line per level, ending in blank "notes / anomalies" bullets.</result>
 <usage><subagent_tokens>51959</subagent_tokens><tool_uses>10</tool_uses><duration_ms>199499</duration_ms></usage>
 </task-notification>
+[2026-08-14 14:26:15] In the evaluation, I am currently comparing the output of bglr to sommer by running n_mrk <- 2000
+G <- std_grm(.Gmatrix(make_dosage(n_acc, n_mrk, seed = 5)))
+rownames(G) <- colnames(G) <- paste0("L", 1:n_acc)
+gebv <- stage2_gblup(bl, list(G = G), nIter = 3000, burnIn = 1000, refresh = TRUE)
+gebv_sommer <- stage2_gblup(bl, list(G = G), engine = "sommer", refresh = TRUE)
+   The bglr output gives non-zero estimates, the estimates from sommer are all zero.  That could be because of a problem or because the line phenotypes are all randomly generated and so independent of the markers leading to a line variance component of zero.  This is in stage L7.  Set up stage L6 so that it samples markers there and attributes a small non-zero effect to each marker (all markers are causal for the trait) so that each line has a genetic effect and that genetic effect is then used in randomly generating phenotypes.  Then variance components should be non-zero.

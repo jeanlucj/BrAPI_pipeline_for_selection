@@ -1,9 +1,9 @@
-Freeze damage severity - 0-9 Rating|CO_350:0005001
-Freeze damage severity - 0-9 Rating|day 153|COMP:0000164
-Freeze damage severity - 0-9 Rating|day 160|COMP:0000165
-Freeze damage severity - 0-9 Rating|day 167|COMP:0000166
-Winter stress severity - 0-9 Rating|CO_350:0005003
-Winter survival - percent|CO_350:0000170
-Winter survival - percent|day 153|COMP:0000167
-Winter survival - percent|day 160|COMP:0000168
-Winter survival - percent|day 167|COMP:0000169
+Freeze damage severity - 0-9 Rating|CO_350:0005001	1	Freeze_damage
+Freeze damage severity - 0-9 Rating|day 153|COMP:0000164	1	Freeze_damage_1
+Freeze damage severity - 0-9 Rating|day 160|COMP:0000165	1	Freeze_damage_2
+Freeze damage severity - 0-9 Rating|day 167|COMP:0000166	1	Freeze_damage_3
+Winter stress severity - 0-9 Rating|CO_350:0005003	1	Winter_severity
+Winter survival - percent|CO_350:0000170	1	Winter_survival
+Winter survival - percent|day 153|COMP:0000167	1	Winter_survival_1
+Winter survival - percent|day 160|COMP:0000168	1	Winter_survival_2
+Winter survival - percent|day 167|COMP:0000169	1	Winter_survival_3
