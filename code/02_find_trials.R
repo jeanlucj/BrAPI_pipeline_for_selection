@@ -21,6 +21,7 @@ source(here::here("code", "01_connect.R"))
 #' Pull all locations as a tidy tibble with longitude / latitude extracted from
 #' the GeoJSON `coordinates` (geometry$coordinates = c(lon, lat, alt)).
 get_locations <- function(conn) {
+  say("Fetching locations (all pages) ...")
   resp <- conn$get("/locations", page = "all", pageSize = 1000)
   dat  <- resp$combined_data %||% resp$data
   map_dfr(dat, function(l) {
@@ -37,6 +38,7 @@ get_locations <- function(conn) {
 
 #' Pull all studies as a tidy tibble (one row per study).
 get_studies <- function(conn) {
+  say("Fetching studies (all pages; /studies ignores a server-side location filter) ...")
   resp <- conn$get("/studies", page = "all", pageSize = 1000)
   dat  <- resp$combined_data %||% resp$data
   map_dfr(dat, function(s) {
@@ -68,7 +70,10 @@ find_ny_trials <- function(conn,
                            test_trials = TEST_TRIALS,
                            refresh = FALSE) {
   cache <- cache_path("ny_trials.rds")
-  if (!refresh && file.exists(cache)) return(read_rds(cache))
+  if (!refresh && file.exists(cache)) {
+    note_cache(cache)
+    return(read_rds(cache))
+  }
 
   # Location metadata, with great-circle distance from the center point.
   locs <- get_locations(conn) |>
@@ -78,6 +83,7 @@ find_ny_trials <- function(conn,
                                c(center_lon, center_lat))) / 1000)
 
   studies <- get_studies(conn)
+  note(nrow(locs), " located sites, ", nrow(studies), " studies on the server")
 
   if (!is.null(training_trials)) {
     # Explicit training list: select by name, keep even if the location lacks

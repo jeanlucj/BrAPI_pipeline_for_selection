@@ -23,6 +23,7 @@ here::i_am("code/04_find_genotyping.R")
 source(here::here("code", "01_connect.R"))
 source(here::here("code", "grm_utils.R"))
 source(here::here("code", "em_covariance_combiner.R"))
+source(here::here("code", "synonyms.R"))   # build_alias_lookup, canonicalize_to_primary
 
 # --- Coverage ----------------------------------------------------------------
 
@@ -114,42 +115,54 @@ source(here::here("code", "em_covariance_combiner.R"))
   if (n <= 1L) return(list(path = path, tmp = NULL))
   tmp  <- tempfile(fileext = ".vcf")
   kept <- .thin_vcf(path, n, tmp)
-  message(sprintf("  thinning %s: %d -> %d markers (every %dth)",
-                  basename(path), nm, kept, n))
+  note(sprintf("thinning %s: %d -> %d markers (every %dth)",
+               basename(path), nm, kept, n))
   list(path = tmp, tmp = tmp)
 }
 
 # VCF -> accession x marker dosage matrix (count of ALT allele), optionally
 # thinned to target_density and restricted to keep_samples (by germplasmName) to
 # bound memory. Returns NULL if none of keep_samples are present.
+#
+# `alias_lookup` (from build_alias_lookup) relabels VCF sample names that are
+# synonyms of our accessions to the primary germplasmName BEFORE matching against
+# keep_samples and BEFORE labeling the dosage rows -- so a project that carries an
+# accession under a preliminary/synonym name still matches. Empty lookup = no-op.
 .vcf_to_dosage <- function(vcf_path, keep_samples = NULL,
-                           target_density = TARGET_DENSITY) {
+                           target_density = TARGET_DENSITY,
+                           alias_lookup = character(0)) {
   th <- .thin_to_target(vcf_path, target_density)
   on.exit(if (!is.null(th$tmp)) unlink(th$tmp))
 
   cols <- NULL
   if (!is.null(keep_samples)) {
     samples <- .read_vcf_samples(vcf_path)   # original header valid after thinning
-    keep_cols <- 9 + which(samples %in% keep_samples)
+    canon   <- canonicalize_to_primary(samples, alias_lookup)
+    keep_cols <- 9 + which(canon %in% keep_samples)
     if (!length(keep_cols)) return(NULL)
     cols <- c(1:9, keep_cols)
   }
   vcf <- if (is.null(cols)) vcfR::read.vcfR(th$path, verbose = FALSE)
-         else                vcfR::read.vcfR(th$path, cols = cols, verbose = FALSE)
+         else               vcfR::read.vcfR(th$path, cols = cols, verbose = FALSE)
   if (is.null(vcf@gt) || ncol(vcf@gt) < 2) return(NULL)
 
-  # vcfR uses the ID column for marker names and requires it unique; many T3 VCFs
-  # leave ID as "." or repeat it, so build unique CHROM_POS ids.
-  ids <- vcf@fix[, "ID"]
-  if (any(is.na(ids)) || anyDuplicated(ids)) {
-    vcf@fix[, "ID"] <- make.unique(paste(vcf@fix[, "CHROM"], vcf@fix[, "POS"], sep = "_"))
-  }
+  # Marker key = canonical CHROM + POS, built the SAME way for every file so a
+  # physical marker aligns across projects. We deliberately ignore the VCF ID
+  # column: T3 projects are inconsistent (some carry SNP names, others "."), and
+  # keying on it made identical markers look distinct -> the cross-project merge
+  # exploded into ~2x markers, ~50% missing, gutting accessions in QC. CHROM is
+  # canonicalized by stripping a leading "chr" (e.g. "chr1A" -> "1A"); make.unique
+  # guards the rare within-file duplicate position (vcfR requires unique ids).
+  chrom <- sub("^chr", "", vcf@fix[, "CHROM"], ignore.case = TRUE)
+  vcf@fix[, "ID"] <- make.unique(paste(chrom, vcf@fix[, "POS"], sep = "_"))
   gt <- vcfR::extract.gt(vcf, element = "GT")            # markers x samples
   g <- matrix(NA_real_, nrow(gt), ncol(gt), dimnames = dimnames(gt))
   g[gt %in% c("0/0", "0|0")] <- 0
   g[gt %in% c("0/1", "1/0", "0|1", "1|0")] <- 1
   g[gt %in% c("1/1", "1|1")] <- 2
-  t(g)                                                   # accessions x markers
+  M <- t(g)                                              # accessions x markers
+  rownames(M) <- canonicalize_to_primary(rownames(M), alias_lookup)  # synonym -> primary
+  M
 }
 
 # Merge dosage matrices (same protocol = same markers) by union of markers and
@@ -167,21 +180,28 @@ source(here::here("code", "em_covariance_combiner.R"))
   M[!duplicated(rownames(M)), , drop = FALSE]
 }
 
-# Marker QC: drop high-missing markers/accessions, MAF filter, mean-impute.
+# Marker QC: drop high-missing markers/accessions, MAF filter, impute.
 # Markers are filtered BEFORE accessions: when projects use different genome
 # annotations (different marker names), merging leaves every accession ~50%
 # missing, so dropping the minority-annotation markers first is what makes the
-# accessions look complete again.
-.qc_markers <- function(M, max_missing = MAX_MISSING, min_maf = MIN_MAF) {
+# accessions look complete again. `impute` selects the fill for the residual
+# missing calls ("glmnet" or "mean"; see GRM_IMPUTE / grm_utils.R). Imputation is
+# done on whatever panel M holds, so .protocol_grm passes the augmented panel.
+.qc_markers <- function(M, max_missing = MAX_MISSING, min_maf = MIN_MAF,
+                        impute = GRM_IMPUTE, label = NULL) {
+  n_mar0 <- ncol(M); n_acc0 <- nrow(M)
   M <- M[, colMeans(is.na(M)) <= max_missing, drop = FALSE]
   M <- M[rowMeans(is.na(M)) <= max_missing, , drop = FALSE]
   af  <- colMeans(M, na.rm = TRUE) / 2
   maf <- pmin(af, 1 - af)
   M <- M[, !is.na(maf) & maf >= min_maf, drop = FALSE]
-  col_means <- colMeans(M, na.rm = TRUE)
-  na_idx <- which(is.na(M), arr.ind = TRUE)
-  if (nrow(na_idx) > 0) M[na_idx] <- col_means[na_idx[, "col"]]
-  M
+  note("QC: ", n_mar0, " -> ", ncol(M), " markers, ",
+       n_acc0, " -> ", nrow(M), " accessions")
+  if (!anyNA(M)) return(M)
+  switch(impute,
+         glmnet = .impute_glmnet(M, label = label),
+         mean   = .mean_impute(M),
+         stop("Unknown GRM_IMPUTE '", impute, "'; use \"glmnet\" or \"mean\"."))
 }
 
 # --- Marker download ---------------------------------------------------------
@@ -198,13 +218,16 @@ source(here::here("code", "em_covariance_combiner.R"))
   vdir <- cache_path("vcf_cache")
   dir.create(vdir, showWarnings = FALSE, recursive = TRUE)
   paths <- character(0)
+  # Bar over this protocol's project files; the label carries the protocol id
+  # because this nests inside the per-protocol bar in .genotype_partials().
+  pb <- pb_start(nrow(arch), paste0("protocol ", protocol_id, ": VCF files"))
+  on.exit(pb_done(pb), add = TRUE)
   for (i in seq_len(nrow(arch))) {
     dest <- file.path(vdir, paste0("proto", protocol_id, "_proj",
                                    arch$project_id[i], ".vcf"))
     if (!file.exists(dest) || file.size(dest) == 0) {
-      message("  downloading protocol ", protocol_id, " project ",
-              arch$project_id[i], " (", i, "/", nrow(arch),
-              "); large GBS files may take a while...")
+      note("downloading protocol ", protocol_id, " project ", arch$project_id[i],
+           " (", i, "/", nrow(arch), "); large GBS files may take a while ...")
       ok <- tryCatch({
         conn$vcf_archived(output = dest,
                           genotyping_project_id = as.integer(arch$project_id[i]),
@@ -215,30 +238,62 @@ source(here::here("code", "em_covariance_combiner.R"))
         warning("Skipping project ", arch$project_id[i], " of protocol ",
                 protocol_id, " (download failed; may be too large).")
         unlink(dest)
+        pb_tick(pb)
         next
       }
+      note("project ", arch$project_id[i], ": ", .fmt_bytes(file.size(dest)))
     }
     paths <- c(paths, dest)
+    pb_tick(pb)
   }
   paths
 }
 
 # Build one standardized GRM (+ its dosage) for a protocol from its cached VCFs.
-.protocol_grm <- function(files, keep_samples) {
+#
+# Imputation and the VanRaden GRM are estimated on the protocol's full PANEL, not
+# just our relevant accessions: we keep all relevant accessions (targets+bridges)
+# present in the protocol and fill in with non-relevant accessions up to a panel
+# of max(panel_min, n_relevant) -- so allele frequencies / imputation / the GRM
+# are stably estimated -- then SUBSET the GRM (and dosage) back to the relevant
+# accessions. Estimating on only the relevant handful makes the diagonals an
+# artifact of who shares the panel (see code/impute_diagnostic*.R). `all_samples`
+# is the protocol's full sample list (already read for bridge detection).
+.protocol_grm <- function(files, keep_samples, all_samples, panel_min = GRM_PANEL_MIN,
+                          alias_lookup = character(0), label = NULL) {
+  relevant <- intersect(keep_samples, all_samples)
+  if (length(relevant) < 2) return(NULL)
+  cap          <- max(panel_min, length(relevant))
+  non_relevant <- setdiff(all_samples, keep_samples)
+  n_fill       <- min(length(non_relevant), cap - length(relevant))
+  fill         <- if (n_fill > 0) sample(non_relevant, n_fill) else character(0)
+  panel        <- union(relevant, fill)
+
   mats <- list()
   for (f in files) {
-    m <- tryCatch(.vcf_to_dosage(f, keep_samples = keep_samples),
+    m <- tryCatch(.vcf_to_dosage(f, keep_samples = panel, alias_lookup = alias_lookup),
                   error = function(e) { warning("parse failed: ", basename(f),
                                                 " (", conditionMessage(e), ")"); NULL })
     if (!is.null(m) && nrow(m) > 0 && ncol(m) > 0) mats[[length(mats) + 1L]] <- m
   }
   if (!length(mats)) return(NULL)
-  dosage <- .qc_markers(.merge_dosage(mats))
+  note(sprintf("panel: %d relevant + %d filler = %d accessions",
+               length(relevant), length(fill), length(panel)))
+  # QC + impute on the panel; `label` carries the protocol id into the imputation
+  # bar, which nests inside the per-protocol bar in .combine_to_G()'s caller.
+  dosage <- .qc_markers(.merge_dosage(mats), label = label)
   if (nrow(dosage) < 2 || ncol(dosage) < 2) return(NULL)
-  grm <- std_grm(.Gmatrix(dosage))
+
+  # GRM on the full panel (stable allele frequencies), then restrict to the
+  # relevant accessions that survived QC; std_grm normalizes the relevant
+  # submatrix's mean diagonal to 1 for the EM combiner.
+  G    <- .Gmatrix(dosage)
+  keep <- intersect(relevant, rownames(G))
+  if (length(keep) < 2) return(NULL)
+  grm  <- std_grm(G[keep, keep, drop = FALSE])
   # m_eff = effective # of independent samples (Galwey), used to set this GRM's EM
   # degrees of freedom relative to the other partials.
-  list(dosage = dosage, grm = grm, m_eff = .effective_n(grm))
+  list(dosage = dosage[keep, , drop = FALSE], grm = grm, m_eff = .effective_n(grm))
 }
 
 # --- Pedigree partials -------------------------------------------------------
@@ -327,9 +382,13 @@ source(here::here("code", "em_covariance_combiner.R"))
 # germplasmName) for the names that resolve; warns about any that don't (those can
 # still be predicted if they appear as a VCF sample in a selected protocol).
 .resolve_names_to_dbids <- function(names, pedigree_dir) {
+  none <- tibble(germplasmDbId = character(), germplasmName = character())
   names <- unique(names[!is.na(names)])
-  if (!length(names)) return(tibble(germplasmDbId = character(), germplasmName = character()))
+  if (!length(names)) return(none)
   d2n <- .germplasm_name_map(pedigree_dir)          # dbId -> name
+  # No cache (or no pedigree dir) -> nothing to resolve against; the names can
+  # still be predicted if they turn up as VCF samples in a selected protocol.
+  if (!length(d2n)) return(none)
   n2d <- d2n[!duplicated(d2n)]                       # keep first dbId per name
   n2d <- set_names(names(n2d), unname(n2d))          # name -> dbId
   hit <- names[names %in% names(n2d)]
@@ -389,7 +448,10 @@ source(here::here("code", "em_covariance_combiner.R"))
 # 1GB group CSV never becomes a full dense matrix.
 .pedigree_partials <- function(group_members, dbid_to_name, keep_names) {
   partials <- list()
+  pb <- pb_start(length(group_members), "Pedigree: groups")
+  on.exit(pb_done(pb), add = TRUE)
   for (csv in names(group_members)) {
+    pb_tick(pb)
     dbids <- group_members[[csv]]
     nm    <- dbid_to_name[dbids]
     keep_dbids <- dbids[!is.na(nm) & nm %in% keep_names]
@@ -429,32 +491,16 @@ source(here::here("code", "em_covariance_combiner.R"))
 
 # --- Driver ------------------------------------------------------------------
 
-#' Identify covering genotyping protocols/projects and build the prediction GRM.
-#'
-#' @param conn             BrAPI connection.
-#' @param train_accessions tibble (germplasmDbId, germplasmName) for the training
-#'   accessions. Always present in the returned `G` (injected if they have neither
-#'   genotypes nor pedigree).
-#' @param test_accessions  tibble (germplasmDbId, germplasmName) of extra accessions
-#'   to predict (e.g. from TEST_TRIALS); predicted only if they end up in the GRM.
-#' @param test_names       germplasmName vector of extra accessions to predict
-#'   (TEST_ACCESSIONS); their dbIds are resolved via the pedigree germplasm cache so
-#'   their protocols are also covered.
-#' @param protocol_id NULL = combine ALL covering protocols (EM); an id = that
-#'   protocol only.
-#' @return list(protocols, projects, protocol_ids, G, markers). `G` is the combined
-#'   GRM by germplasmName, SUBSET to the prediction targets (training + predictable
-#'   test); `markers` is the raw dosage matrix only for the single-protocol/no-
-#'   pedigree/no-injection case (else NULL). Cached to data/genotypes.rds.
-find_and_get_genotypes <- function(conn, train_accessions,
-                                   test_accessions = NULL,
-                                   test_names = TEST_ACCESSIONS,
-                                   protocol_id = GENO_PROTOCOL_ID,
-                                   pedigree_dir = PEDIGREE_DIR,
-                                   refresh = FALSE) {
-  cache <- cache_path("genotypes.rds")
-  if (!refresh && file.exists(cache)) return(read_rds(cache))
-
+# Build the df-INDEPENDENT inputs to the EM combine: per-protocol marker GRMs (+
+# their effective sample sizes and raw dosages), pedigree partials, and the
+# prediction target / force-include name sets. Separated from .combine_to_G() so
+# the (expensive) download+GRM build runs once while the (cheap) df-weighted
+# combine can be re-run with different degrees of freedom.
+.genotype_partials <- function(conn, train_accessions, test_accessions = NULL,
+                               test_names = TEST_ACCESSIONS,
+                               protocol_id = GENO_PROTOCOL_ID,
+                               pedigree_dir = PEDIGREE_DIR,
+                               refresh = FALSE) {
   clean <- function(a) {
     if (is.null(a) || !nrow(a)) return(tibble(germplasmDbId = character(),
                                               germplasmName = character()))
@@ -478,6 +524,11 @@ find_and_get_genotypes <- function(conn, train_accessions,
   force_names  <- unique(train$germplasmName)
   our_names    <- target_names                        # build keep-set (+ bridges below)
 
+  # Alias -> primary lookup so VCF samples carried under a synonym of one of our
+  # accessions still match (cached; empty when USE_SYNONYMS is off/unavailable).
+  alias_lookup <- build_alias_lookup(conn, our_names, refresh = refresh)
+
+  say("Resolving genotyping coverage for ", length(dbids), " accessions ...")
   protocols <- .safe_coverage(conn$filter_geno_protocols, dbids, "protocol")
   projects  <- .safe_coverage(conn$filter_geno_projects,  dbids, "project")
   if (nrow(protocols) == 0) {
@@ -487,10 +538,12 @@ find_and_get_genotypes <- function(conn, train_accessions,
   proto_ids <- if (is.null(protocol_id)) protocols$dbId[protocols$n_covered > 0]
                else as.character(protocol_id)
 
+  note(nrow(protocols), " covering protocol(s); using ", length(proto_ids))
+
   # Download archived VCFs per protocol (cached); keep protocols that yielded files.
   files_by_proto <- set_names(
     map(proto_ids, ~ .download_protocol_files(conn, .x),
-        .progress = "Genotypes: downloading VCFs by protocol"),
+        .progress = pb_wrap("Genotypes: protocols (VCF download)")),
     proto_ids)
   files_by_proto <- files_by_proto[lengths(files_by_proto) > 0]
   if (!length(files_by_proto)) {
@@ -512,17 +565,25 @@ find_and_get_genotypes <- function(conn, train_accessions,
   # genotyping protocol AND each pedigree group. This keeps an accession seen in
   # only one protocol when it also sits in a pedigree group, so it can bridge that
   # protocol's marker GRM to the pedigree relationship matrix.
-  samples_by_proto <- map(files_by_proto, ~ unique(unlist(lapply(.x, .read_vcf_samples))))
+  samples_by_proto <- map(files_by_proto, ~ unique(canonicalize_to_primary(
+    unlist(lapply(.x, .read_vcf_samples)), alias_lookup)))
   occ <- table(unlist(c(samples_by_proto, ped_group_names), use.names = FALSE))
   bridges <- names(occ)[occ >= 2]
   keep_samples <- union(our_names, bridges)
 
-  # One standardized GRM per protocol.
+  # One standardized GRM per protocol, each estimated on its full panel (relevant
+  # accessions + non-relevant fillers up to GRM_PANEL_MIN). Seed the filler draw
+  # so the cached GRM is reproducible.
+  set.seed(SEED)
   proto_grms <- list(); proto_dosage <- list(); m_effs <- numeric(0); used <- character(0)
+  n_proto <- length(files_by_proto); i_proto <- 0L
   for (pid in names(files_by_proto)) {
-    message("Building GRM for protocol ", pid)
-    res <- .protocol_grm(files_by_proto[[pid]], keep_samples)
-    if (is.null(res)) { message("  no usable markers; skipping"); next }
+    i_proto <- i_proto + 1L
+    label <- paste0("protocol ", pid, " (", i_proto, "/", n_proto, ")")
+    say("Building GRM for ", label, " ...")
+    res <- .protocol_grm(files_by_proto[[pid]], keep_samples, samples_by_proto[[pid]],
+                         alias_lookup = alias_lookup, label = label)
+    if (is.null(res)) { note("no usable markers; skipping"); next }
     proto_grms[[pid]]   <- res$grm
     proto_dosage[[pid]] <- res$dosage
     m_effs <- c(m_effs, res$m_eff)
@@ -534,19 +595,35 @@ find_and_get_genotypes <- function(conn, train_accessions,
   # bridges), labeled by germplasmName via the widened map.
   ped_partials <- .pedigree_partials(ped_members, ped_d2n, keep_samples)
 
-  # EM degrees of freedom: marker GRMs from their effective sample sizes
-  # (re-centered on GRM_DF_MEAN, spread capped at GRM_DF_STDEV); pedigree fixed.
-  grm_dfs  <- .center_dfs(m_effs, GRM_DF_MEAN, GRM_DF_STDEV)
-  partials <- c(unname(proto_grms), ped_partials)
-  df_all   <- c(grm_dfs, rep(PEDIGREE_DF, length(ped_partials)))
+  list(proto_grms = proto_grms, proto_dosage = proto_dosage, m_effs = m_effs,
+       used = used, ped_partials = ped_partials, target_names = target_names,
+       force_names = force_names, protocols = protocols, projects = projects)
+}
+
+# Combine the partials from .genotype_partials() into the prediction GRM, weighting
+# them by EM degrees of freedom: marker GRMs from their effective sample sizes
+# (re-centered on grm_df_mean, spread capped at grm_df_stdev), pedigree fixed at
+# pedigree_df. Subsets to the prediction targets and injects ungenotyped training
+# accessions. Returns list(G, markers).
+.combine_to_G <- function(parts, grm_df_mean = GRM_DF_MEAN,
+                          grm_df_stdev = GRM_DF_STDEV, pedigree_df = PEDIGREE_DF) {
+  grm_dfs  <- .center_dfs(parts$m_effs, grm_df_mean, grm_df_stdev)
+  partials <- c(unname(parts$proto_grms), parts$ped_partials)
+  df_all   <- c(grm_dfs, rep(pedigree_df, length(parts$ped_partials)))
 
   if (length(partials) == 1L) {
     G <- partials[[1]]
   } else {
     combined_names <- unique(unlist(lapply(partials, colnames)))
     var_indices <- lapply(partials, function(g) match(colnames(g), combined_names))
-    res <- EMCovarianceCombiner(partial_covs = partials, var_indices = var_indices,
-                                degrees_freedom = df_all)
+    # em_covariance_combiner.R is a verbatim copy from ../T3Predictathon2026 (it
+    # draws its own txtProgressBar over the EM iterations), so it is bracketed from
+    # out here rather than edited, to keep that copy identical.
+    res <- time_it(
+      paste0("EM-combining ", length(partials), " partial covariance(s) over ",
+             length(combined_names), " accessions"),
+      EMCovarianceCombiner(partial_covs = partials, var_indices = var_indices,
+                           degrees_freedom = df_all))
     G <- res$psi[-1, -1]                      # drop the phantom variable
     G <- (G + t(G)) / 2                        # clean tiny EM floating-point asymmetry
     rownames(G) <- colnames(G) <- combined_names
@@ -556,9 +633,9 @@ find_and_get_genotypes <- function(conn, train_accessions,
   # combine but are dropped from the matrix we predict on. Then force-include any
   # training accession that has neither genotypes nor pedigree, with diagonal =
   # mean diagonal of the kept matrix and zero off-diagonals (a prior-only line).
-  keep <- intersect(target_names, rownames(G))
+  keep <- intersect(parts$target_names, rownames(G))
   G <- G[keep, keep, drop = FALSE]
-  inject <- setdiff(force_names, rownames(G))
+  inject <- setdiff(parts$force_names, rownames(G))
   if (length(inject)) {
     diag_val  <- if (nrow(G)) mean(diag(G)) else 1
     all_names <- c(rownames(G), inject)
@@ -575,16 +652,65 @@ find_and_get_genotypes <- function(conn, train_accessions,
   # (injected accessions have no marker row), subset to the retained accessions so
   # marker-effect BGLR models stay consistent with G.
   markers <- NULL
-  if (length(used) == 1L && length(ped_partials) == 0L && !length(inject)) {
-    m <- proto_dosage[[used]]
+  if (length(parts$used) == 1L && length(parts$ped_partials) == 0L && !length(inject)) {
+    m <- parts$proto_dosage[[parts$used]]
     markers <- m[rownames(m) %in% rownames(G), , drop = FALSE]
   }
+  list(G = G, markers = markers)
+}
 
-  out <- list(protocols    = protocols,
-              projects     = projects,
-              protocol_ids = used,
-              G            = G,
-              markers      = markers)
+#' Identify covering genotyping protocols/projects and build the prediction GRM.
+#'
+#' @param conn             BrAPI connection.
+#' @param train_accessions tibble (germplasmDbId, germplasmName) for the training
+#'   accessions. Always present in the returned `G` (injected if they have neither
+#'   genotypes nor pedigree).
+#' @param test_accessions  tibble (germplasmDbId, germplasmName) of extra accessions
+#'   to predict (e.g. from TEST_TRIALS); predicted only if they end up in the GRM.
+#' @param test_names       germplasmName vector of extra accessions to predict
+#'   (TEST_ACCESSIONS); their dbIds are resolved via the pedigree germplasm cache so
+#'   their protocols are also covered.
+#' @param protocol_id NULL = combine ALL covering protocols (EM); an id = that
+#'   protocol only.
+#' @param grm_df_mean,grm_df_stdev,pedigree_df EM degrees-of-freedom controls (see
+#'   `.combine_to_G`); default to the config values.
+#' @param save_partials if TRUE, also write the pre-combine partial GRMs (marker +
+#'   pedigree, minus the bulky raw dosages) to data/genotype_partials.rds for
+#'   inspection / debugging the EM combine.
+#' @return list(protocols, projects, protocol_ids, G, markers). `G` is the combined
+#'   GRM by germplasmName, SUBSET to the prediction targets (training + predictable
+#'   test); `markers` is the raw dosage matrix only for the single-protocol/no-
+#'   pedigree/no-injection case (else NULL). Cached to data/genotypes.rds.
+find_and_get_genotypes <- function(conn, train_accessions,
+                                   test_accessions = NULL,
+                                   test_names = TEST_ACCESSIONS,
+                                   protocol_id = GENO_PROTOCOL_ID,
+                                   pedigree_dir = PEDIGREE_DIR,
+                                   grm_df_mean = GRM_DF_MEAN,
+                                   grm_df_stdev = GRM_DF_STDEV,
+                                   pedigree_df = PEDIGREE_DF,
+                                   save_partials = FALSE,
+                                   refresh = FALSE) {
+  cache <- cache_path("genotypes.rds")
+  if (!refresh && file.exists(cache)) {
+    note_cache(cache)
+    return(read_rds(cache))
+  }
+
+  parts <- .genotype_partials(conn, train_accessions, test_accessions, test_names,
+                              protocol_id, pedigree_dir, refresh = refresh)
+  if (save_partials) {
+    # Drop the bulky raw dosages; keep the standardized partial GRMs + metadata.
+    write_rds(parts[setdiff(names(parts), "proto_dosage")],
+              cache_path("genotype_partials.rds"))
+  }
+  cm    <- .combine_to_G(parts, grm_df_mean, grm_df_stdev, pedigree_df)
+
+  out <- list(protocols    = parts$protocols,
+              projects     = parts$projects,
+              protocol_ids = parts$used,
+              G            = cm$G,
+              markers      = cm$markers)
   write_rds(out, cache)
   out
 }

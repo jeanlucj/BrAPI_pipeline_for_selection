@@ -2,16 +2,18 @@
 # analysis/brapi_selection_pipeline.Rmd but meant to be run in a live R console.
 #
 # Why this exists: wflow_build() renders the Rmd in a non-interactive callr
-# subprocess with knitr capturing each chunk's output, so the cli/txt progress
-# bars in get_phenotypes(), find_and_get_genotypes() and the EM combiner never
-# get a live terminal to draw to. Sourcing this in an interactive session does,
-# so you can watch the slow download/combine steps progress.
+# subprocess with knitr capturing each chunk's output, so the progress bars and
+# status lines (see code/progress.R) never get a live terminal to draw to.
+# Sourcing this in an interactive session does, so you can watch the slow
+# download/fit steps progress and see how long each step took.
 #
 # Usage (interactive console, project root):
 #   source(here::here("code", "run_pipeline.R"))
-# Every step caches to data/*.rds, so re-sourcing is fast and returns instantly
-# (no bars). To force fresh runs and see the bars, set this in config.R:
+# Every step caches to data/*.rds, so re-sourcing is fast: each cached step says
+# so and returns immediately. To force fresh runs, set this in config.R:
 #   PIPELINE_REFRESH <- TRUE
+# Reporting follows SHOW_PROGRESS (config.R, default interactive()); override with
+# options(brapi.progress = TRUE/FALSE).
 # All result objects (trials, pheno, geno, blues, gebv, cv, selected) are left
 # in the global environment for inspection.
 
@@ -29,42 +31,53 @@ purrr::walk(
 refresh <- exists("PIPELINE_REFRESH") && isTRUE(PIPELINE_REFRESH)
 if (refresh) message("PIPELINE_REFRESH = TRUE: re-running every cached step.")
 
+# Step banners are numbered to match the step FILES (01_connect .. 07_select),
+# with cross-validation as 6b since it is part of the Stage-2 file.
+timings_reset()
+
+h <- step_start("1 Connect")
 conn <- connect_t3()
+step_done(h, DB_NAME)
 
-message("\n== 1. Find NY-region trials ==")
+h <- step_start("2 Trials")
 trials <- find_ny_trials(conn, refresh = refresh)
-cat(sum(trials$role == "training"), "training +", sum(trials$role == "test"),
-    "test trials across", n_distinct(trials$locationName), "locations\n")
+step_done(h, sum(trials$role == "training"), " training + ",
+          sum(trials$role == "test"), " test trials across ",
+          n_distinct(trials$locationName), " locations")
 
-message("\n== 2. Download phenotypes (progress by study) ==")
+h <- step_start("3 Phenotypes")
 pheno <- get_phenotypes(conn, trials$studyDbId, refresh = refresh)
 sets  <- split_by_role(pheno, trials)   # train_pheno, train_acc, test_acc
-cat("Observations:", nrow(pheno$pheno),
-    "| training accessions:", nrow(sets$train_acc),
-    "| test-trial accessions:", nrow(sets$test_acc), "\n")
+step_done(h, nrow(pheno$pheno), " observations | ", nrow(sets$train_acc),
+          " training + ", nrow(sets$test_acc), " test-trial accessions")
 
-message("\n== 3. Genotyping coverage + combined GRM (download progress, EM bar) ==")
+h <- step_start("4 Genotyping")
 geno <- find_and_get_genotypes(conn, sets$train_acc, sets$test_acc,
                                TEST_ACCESSIONS, refresh = refresh)
-cat("Protocols combined:", paste(geno$protocol_ids, collapse = ", "),
-    "| prediction GRM:", nrow(geno$G), "x", ncol(geno$G), "accessions\n")
+step_done(h, "protocols ", paste(geno$protocol_ids, collapse = ", "),
+          " | prediction GRM ", nrow(geno$G), " x ", ncol(geno$G))
 
-message("\n== 4. Stage-1 BLUEs (training trials only) ==")
+h <- step_start("5 Stage-1 BLUEs")
 blues <- stage1_blues(sets$train_pheno)
-cat(nrow(blues), "BLUEs across", n_distinct(blues$studyDbId), "studies\n")
+step_done(h, nrow(blues), " BLUEs across ", n_distinct(blues$studyDbId), " studies")
 
-message("\n== 5. Stage-2 genomic prediction ==")
+h <- step_start("6 Stage-2 prediction")
 gebv <- stage2_gblup(blues, geno, refresh = refresh)
-cat(nrow(gebv), "GEBVs across", n_distinct(gebv$trait), "traits\n")
+step_done(h, nrow(gebv), " GEBVs across ", n_distinct(gebv$trait), " traits")
 
-message("\n== 5b. Cross-validated accuracy ==")
-cv <- map_dfr(unique(gebv$trait), ~ cv_accuracy(blues, geno, .x))
+h <- step_start("6b Cross-validation")
+cv <- map_dfr(unique(gebv$trait), ~ cv_accuracy(blues, geno, .x),
+              .progress = pb_wrap("Cross-validation: traits"))
+saveRDS(cv, output_path("trait_cvs.rds"))
+step_done(h, nrow(cv), " traits cross-validated")
 print(cv)
 
-message("\n== 6. Select parents ==")
-selected <- select_parents(gebv, geno = geno, n_select = 20)
-cat(sum(selected$selected), "selected; full ranking written to ",
-    output_path("selected_parents.csv"), "\n", sep = "")
+h <- step_start("7 Selection")
+selected <- select_parents(gebv, cv = cv)
+step_done(h, nrow(selected$parents), " accessions -> ",
+          output_path("breeders_output.csv"))
+
+print_timings()
 
 invisible(list(trials = trials, pheno = pheno, sets = sets, geno = geno,
                blues = blues, gebv = gebv, cv = cv, selected = selected))

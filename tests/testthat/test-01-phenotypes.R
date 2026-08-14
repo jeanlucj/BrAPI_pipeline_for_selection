@@ -19,8 +19,9 @@ make_pheno_conn <- function() {
 
 test_that("get_phenotypes filters traits, parses design, and lists accessions", {
   ph <- get_phenotypes(make_pheno_conn(), "S1",
-                       trait_patterns = c("yield"), refresh = TRUE)
-  expect_true(all(stringr::str_detect(ph$pheno$trait, "yield")))   # height filtered out
+                       trait_names = "Grain yield - g/m2|CO_350:0000260",
+                       refresh = TRUE)
+  expect_setequal(ph$pheno$trait, "Grain yield - g/m2|CO_350:0000260")  # exact match; height out
   expect_false(anyNA(ph$pheno$value))                              # NA obs dropped
   expect_equal(nrow(ph$pheno), 3)                                  # ou1,ou2,ou3 (ou4 NA dropped)
   expect_false("ou4" %in% ph$design$obsUnitDbId)                   # NA-only unit absent
@@ -29,9 +30,9 @@ test_that("get_phenotypes filters traits, parses design, and lists accessions", 
   expect_setequal(ph$accessions$germplasmName, c("LINE1", "LINE2"))
 })
 
-test_that("empty trait_patterns keeps all traits", {
+test_that("empty trait_names keeps all traits", {
   ph <- get_phenotypes(make_pheno_conn(), "S1",
-                       trait_patterns = character(0), refresh = TRUE)
+                       trait_names = character(0), refresh = TRUE)
   expect_true(any(stringr::str_detect(ph$pheno$trait, "height")))
 })
 

@@ -21,15 +21,21 @@ source(here::here("code", "01_connect.R"))
 
 #' Pull phenotypes and design for the given study ids.
 #'
-#' @param conn           BrAPI connection.
-#' @param study_ids      character/numeric vector of studyDbIds.
-#' @param trait_patterns case-insensitive substrings to keep (empty = all traits).
+#' @param conn        BrAPI connection.
+#' @param study_ids   character/numeric vector of studyDbIds.
+#' @param trait_names exact observationVariableName strings to keep (empty = all
+#'   traits).
 #' @return list(pheno, design, accessions). Cached to data/phenotypes.rds.
 get_phenotypes <- function(conn, study_ids,
-                           trait_patterns = TRAIT_PATTERNS, refresh = FALSE) {
+                           trait_names = TRAIT_NAMES, refresh = FALSE) {
   cache <- cache_path("phenotypes.rds")
-  if (!refresh && file.exists(cache)) return(read_rds(cache))
+  if (!refresh && file.exists(cache)) {
+    note_cache(cache)
+    return(read_rds(cache))
+  }
 
+  say("Downloading observations for ", length(study_ids), " studies",
+      " (network-bound; the first run takes a while) ...")
   rows <- map(as.character(study_ids), function(sid) {
     resp <- conn$get("/observationunits",
                      query = list(studyDbId = sid, includeObservations = "true"),
@@ -56,12 +62,15 @@ get_phenotypes <- function(conn, study_ids,
         value     = map_dbl(obs, ~ suppressWarnings(as.numeric(.x$value %||% NA)))
       )
     })
-  }, .progress = "Phenotypes: downloading by study") |>
+  }, .progress = pb_wrap("Phenotypes: studies")) |>
     list_rbind()
 
-  if (length(trait_patterns) > 0 && nrow(rows) > 0) {
-    pat  <- str_c(trait_patterns, collapse = "|")
-    rows <- filter(rows, str_detect(trait, regex(pat, ignore_case = TRUE)))
+  if (length(trait_names) > 0 && nrow(rows) > 0) {
+    kept <- filter(rows, trait %in% trait_names)   # exact observationVariableName match
+    note(nrow(rows), " observations pulled; ", nrow(kept), " kept over the ",
+         length(trait_names), " configured traits (",
+         n_distinct(kept$trait), " of them present)")
+    rows <- kept
   }
 
   pheno  <- rows |> filter(!is.na(value))

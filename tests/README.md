@@ -14,11 +14,15 @@ Or from R: `testthat::test_dir(here::here("tests","testthat"))`.
 ## Tiers
 
 - **Tier 1 — `test-01-*.R` (offline, fast).** Pure helpers and logic on synthetic
-  inputs: `.Gmatrix`/`std_grm`, the EM combiner, VCF parsing/thinning/merge/QC,
+  inputs: the `data/config/` list readers (`config_lines`/`config_traits`),
+  `t3_login()`'s credential handling (stubbed connection, no network), the
+  progress/timing helpers (silent and value-transparent when reporting is off),
+  `.Gmatrix`/`std_grm`, the EM combiner, VCF parsing/thinning/merge/QC,
   pedigree-matrix loading + companion-file contracts, name→dbId resolution,
   coverage-table parsing, trial selection (radius + `TRAINING_TRIALS` + `TEST_TRIALS`
-  roles + multi-type, via a fake connection), phenotype/design extraction +
-  `split_by_role`, Stage-1 BLUEs, the Stage-2 helpers, and `select_parents`.
+  roles + multi-type, via a fake connection), phenotype/design extraction with exact
+  `trait_names` matching + `split_by_role`, Stage-1 BLUEs, the Stage-2 helpers, and
+  `select_parents` (un-standardized index + two-block `breeders_output.csv`).
 - **Tier 2 — `test-02-models.R` (offline, heavier ~1 s).** Runs the real models on
   synthetic data: BGLR RKHS prediction + cross-validation, and a fully *mocked*
   `find_and_get_genotypes` exercising the multi-protocol EM-combine, single-protocol,
@@ -26,11 +30,14 @@ Or from R: `testthat::test_dir(here::here("tests","testthat"))`.
   injection paths (synthetic VCFs, no network).
 - **Tier 3 — `test-03-live.R` (network + downloads, opt-in).** Hits T3/Oat:
   connect, find NY trials, pull phenotypes, build a GRM from the Oat 3K protocol.
-  Skipped unless `RUN_LIVE_TESTS` is set.
+  Skipped unless `RUN_LIVE_TESTS` is set **and** `T3_USERNAME`/`T3_PASSWORD` are
+  available (T3/Oat requires a login; see `.Renviron.example`).
 
 ## How it works
 
 `helper-setup.R` sources `code/` once, redirects `cache_path()`/`output_path()` to a
-tempdir (so tests never touch `data/`/`output/`), and provides the synthetic-data
+tempdir (so tests never touch `data/`/`output/`), sets
+`options(brapi.progress = FALSE)` so no test run is narrated, and provides the
+synthetic-data
 and mock-connection builders (`write_test_vcf`, `make_dosage`, `fake_conn`, …). Tests
 pass `refresh = TRUE` so cached results are not reused.

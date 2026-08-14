@@ -26,7 +26,9 @@ This pipeline pulls oat data from **T3/Oat** over **BrAPI** and ends in a ranked
 5.  **Stage 2** — multi-environment genomic prediction (BGLR) → GEBVs for the target accessions, including those never phenotyped.
 6.  Rank candidates with a selection index and flag redundant (closely related) picks.
 
-All parameters live in `code/config.R`. Each step caches its pull/result under `data/`; set `refresh = TRUE` (or delete the cache) to re-run a step.
+All parameters live in `code/config.R`, which reads the long selection lists (training/test trials, `TEST_ACCESSIONS`, traits) from `data/config/*.txt`. Each step caches its pull/result under `data/`; set `refresh = TRUE` (or delete the cache) to re-run a step.
+
+T3/Oat requires a login: copy `.Renviron.example` to `.Renviron` and fill in `T3_USERNAME` / `T3_PASSWORD` before building this report. `connect_t3()` reads that file itself, so it works in the non-interactive `wflow_build()` subprocess.
 
 ```{r source-code}
 library(tidyverse)
@@ -113,16 +115,20 @@ gebv |>
 ```
 
 ```{r cv}
-cv <- map_dfr(unique(gebv$trait), ~ cv_accuracy(blues, geno, .x))
+cv <- map_dfr(unique(gebv$trait), ~ cv_accuracy(blues, geno, .x),
+              .progress = pb_wrap("Cross-validation: traits"))
 knitr::kable(cv, caption = "5-fold cross-validated prediction accuracy")
 ```
 
-## 6. Selected parents
+## 6. Breeders' output
+
+The selection index is a raw, weighted sum of per-trait GEBVs (`TRAIT_WEIGHTS`); GEBVs are **not** standardized, since they are already appropriately shrunk given their uncertainty. The full table (all predicted accessions, plus a per-trait weight/accuracy block) is written to `output/breeders_output.csv`.
 
 ```{r select}
-selected <- select_parents(gebv, geno = geno, n_select = 20)
-selected |>
-  filter(selected) |>
-  knitr::kable(caption = "Top candidates for crossing (selection index)")
-cat("Full ranking written to", output_path("selected_parents.csv"), "\n")
+sel <- select_parents(gebv, cv = cv)
+head(sel$parents, 20) |>
+  knitr::kable(caption = "Top candidates by selection index (GEBVs un-standardized)")
+sel$traits |>
+  knitr::kable(caption = "Per-trait index weight and cross-validated accuracy")
+cat("Full breeders' output written to", output_path("breeders_output.csv"), "\n")
 ```

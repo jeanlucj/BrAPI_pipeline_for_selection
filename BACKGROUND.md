@@ -18,8 +18,12 @@ T3/Oat is a Breedbase instance exposing the **Breeding API (BrAPI)**. We use the
 `TriticeaeToolbox/BrAPI.R` wrapper. Decisions and quirks discovered against the live
 server:
 
-- **Anonymous access** is sufficient for the phenotype and (archived) genotype data
-  used here; login is wired as a fallback only.
+- **Authentication is required.** T3/Oat no longer serves this data anonymously, and
+  an unauthenticated call returns an *empty* result rather than a 401, so a missing
+  login looks exactly like a missing dataset. `connect_t3()` therefore logs in on
+  every run (`T3_USERNAME`/`T3_PASSWORD` from a gitignored `.Renviron`) and fails
+  loudly when credentials are absent or rejected — the latter also needs an explicit
+  check, since `conn$login()` merely warns on a wrong password.
 - **`/studies` ignores a server-side `locationDbId` filter**, so all studies are
   pulled once and filtered client-side.
 - **Genotyping BrAPI endpoints are not implemented** on T3/Oat (`/allelematrix`
@@ -40,6 +44,17 @@ Best Linear Unbiased Estimates adjusted for local spatial/design structure. This
 also handles augmented designs (unreplicated entries adjusted via replicated check
 blocks). Each BLUE carries a weight = 1/SE², propagating its precision to Stage 2;
 trials without replication fall back to a fixed-only model or plot means.
+
+Because the weight is 1/SE², a trial that fits *perfectly* (residual variance → 0)
+would hand Stage 2 a near-infinite weight and dominate it — exactly what a trait with
+no within-genotype variation does (e.g. winter survival scored 100 on every plot, or
+duplicated records). Three guards prevent this: (1) a trial × trait whose response is
+**constant** is dropped (no estimable genotypic signal — it carries no information,
+not infinite precision); (2) `replicate` and `block` are not both entered as random
+effects when they describe the **same partition** (their labels coincide), which would
+alias the two variance components; (3) every SE is **floored** at `SE_FLOOR_FRAC` of
+the trial × trait response SD, so a near-perfect fit cannot blow up 1/SE². Well-
+estimated BLUEs sit far above the floor and are untouched.
 
 **Stage 2 — genomic prediction (`BGLR`).** Environment main effects are removed
 (environment as a fixed effect, via weighted centering), BLUEs are weight-averaged to
@@ -109,11 +124,45 @@ count, and per-protocol standardization absorbs differing marker counts across
 platforms, so thinning costs little. Thinning only engages when a file has ≥ 2×
 the target.
 
-### Marker QC ordering
-Within a protocol, project files can use **different genome annotations** (different
-marker names), so merging leaves every accession ~50% missing. QC therefore drops
-high-missing **markers before accessions** — removing the minority-annotation markers
-first makes the accessions look complete again instead of discarding all of them.
+### Marker keys and QC ordering
+A marker is keyed by **canonical CHROM_POS** (a leading `chr` stripped), built the same
+way for every VCF, because the `ID` column is inconsistent across T3 projects (some
+carry SNP names, others `.`); keying on `ID` made the *same* physical marker look
+distinct between projects, so merging a multi-project protocol exploded into ~2× markers
+that were ~50% missing and gutted accessions in QC. With CHROM_POS keys the shared array
+markers align across a protocol's projects.
+
+Even so, project files can still use genuinely **different panels** (e.g. an array vs a
+GBS run), so merging leaves real missingness. QC therefore drops high-missing
+**markers before accessions** — removing the minority-panel markers first makes the
+accessions look complete again instead of discarding all of them.
+
+### Estimating each partial GRM on a full panel
+A VanRaden GRM centers and scales markers by **allele frequencies estimated from the
+accessions in the matrix**, and the diagonal is each accession's self-relationship
+*relative to that panel's* frequencies. If we restrict to only our handful of relevant
+accessions (targets + bridges) before computing frequencies, imputing, and building the
+GRM, those quantities are estimated from a few individuals and `std_grm` then pins their
+mean diagonal to 1 — so a diagonal becomes "distance from these few panel-mates" rather
+than a stable property. In practice this produced wildly low diagonals for some
+accessions, and the apparent ranking even **inverted** versus a broad-panel estimate (an
+accession that looked under-related on a tiny panel was actually among the *most*
+divergent on the full panel). The same instability corrupts the off-diagonals that feed
+the EM combine. So each protocol's imputation + GRM are estimated on a **panel** of all
+its relevant accessions plus non-relevant fillers up to `max(GRM_PANEL_MIN, n_relevant)`,
+then the GRM is subset back to the relevant accessions. (Diagnostic: `code/impute_diagnostic*.R`.)
+
+### Imputing the residual missing calls
+Missing genotype calls are filled before the GRM is built (`GRM_IMPUTE`). The default
+`.impute_glmnet` regresses each incomplete marker on its most-correlated markers via
+cross-validated elastic net, borrowing information across markers — which is only
+worthwhile on a reasonably large panel (hence the panel above). It is **robust**: a
+marker whose CV fails (commonly a near-monomorphic marker whose CV training fold is all
+one genotype) falls back to its column mean rather than aborting, and CV folds are fixed
+so the imputed matrix is reproducible. The simpler `.mean_impute` fills each missing call
+with the marker mean; mean-filling pulls heavily-missing accessions toward the population
+mean, but at this panel size missingness turned out **not** to be the driver of the low
+diagonals — the panel-size effect above was.
 
 ## Pedigree stitch
 
@@ -138,11 +187,17 @@ full dense matrix.
 
 ## Selection
 
-Stage-2 GEBVs are standardized per trait and combined into a weighted **selection
-index** (default equal weights, `+1` = higher-is-better). Candidates are ranked, and
-top picks that are highly related (via the combined GRM) to a better-ranked pick are
-flagged `redundant_with` — so a breeder can avoid choosing near-identical parents and
-keep diversity in the crossing block.
+Stage-2 GEBVs are combined into a weighted **selection index**,
+`Index = Σ_trait TRAIT_WEIGHTS × GEBV`. The GEBVs are **not** standardized: a GEBV is
+already shrunk in proportion to its uncertainty, so standardizing per trait would
+inflate poorly-estimated values and distort the index. The weights therefore carry both
+direction (sign) and the relative scale/importance of each trait.
+
+Results are written to `output/breeders_output.csv`, an intentionally spreadsheet-ish
+file with two side-by-side blocks (separated by a blank column): block 1 lists every
+predicted accession (sorted by index) with a training-membership flag, its per-trait
+GEBVs, and its index; block 2 lists, per trait, the index weight and the
+cross-validated prediction accuracy (`cv_accuracy`).
 
 ## Targeting "New York"
 

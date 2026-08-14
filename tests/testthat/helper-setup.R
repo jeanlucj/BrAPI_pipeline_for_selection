@@ -3,6 +3,10 @@
 
 suppressMessages(library(tidyverse))
 
+# Never narrate the test suite. SHOW_PROGRESS already defaults to interactive()
+# (FALSE under Rscript), but the suite is also run from RStudio, so pin it.
+options(brapi.progress = FALSE)
+
 # Source the whole pipeline (offline: defines functions, does not connect).
 for (f in c("config.R", "grm_utils.R", "em_covariance_combiner.R",
             "01_connect.R", "02_find_trials.R", "03_get_phenotypes.R",

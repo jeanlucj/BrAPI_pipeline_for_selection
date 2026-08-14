@@ -49,3 +49,690 @@ Backtrace:
 Akdemir, D., M. Somo, and J. Isidro-Sanchéz. 2023. An Expectation-Maximization Algorithm for Combining a Sample of Partially Overlapping Covariance Matrices. Axioms 12(2): 161. doi: 10.3390/axioms12020161.
 [2026-06-19 16:24:22] This is a thorny area.  I suspect the suggestion to use the number of markers would be good IF the markers were all independent of each other, which they are very much not.  One option would be to use a PCA approximation for the effective number of independent samples.  Oddly, that would have the effect that matrices of more diverse accessions would have higher weights.  I don't see the rationale for that.  I agree with the idea of giving more weight to the marker-based matrices than the pedigree one, but only to an extent.  This is getting Rube-Goldbergesque but: 1. Used some prefered method from the literature for th effective number of independent samples.  Include a GRM_DF_MEAN and GRM_DF_STDEV parameters.  Center the GRM dfs on the GRM_DF_MEAN parameter with a standard deviation that is the lesser of the GRM_DF_STDEV parameter and the observed standard deviation among the GRM effective number of independent samples.
 [2026-06-19 16:36:57] Commit these changes.  Commit message: Elaborations to identify the accessions to be predicted.  Better, though untested, weighting of marker-based versus pedigree-based relationship matrices.  Full practical run yet to happen.  Full user inspection yet to happen.
+[2026-06-19 16:41:02] Please merge into master
+[2026-06-20 07:29:13] A couple of design issues.  I want to replace TRAIT_PATTERNS by TRAIT_NAMES.  I have initiated that in config.R.  I have also added a TRAIT_WEIGHTS.  I also put in TRAIT_SHORT_NAMES, which is optional and should be used for column names of the breeders_output.csv.  Creating that latter will be the task of 07_select.R.  It will be an ugly csv with two blocks.  The first block is has accessions in the first column.  The second column should be 1 if the accession is in the training population, 0 otherwise.  Subsequent columns should be trait GEBVs.  These should NOT be standardized.  Just FYI, it's generally a bad idea to standardize GEBVs.  GEBVs are appropriately shrunken given their uncertainty. Standardizing messes that up. Many breeders get that wrong, so I'm not surprised you made that choice but, well, it's not for me. The last column of the first block should be the selection index value.  The second block of the csv should be by trait.  So the first column is the trait name (TRAIT_SHORT_NAMES). The second column is the TRAIT_WEIGHTS.  The third column should be the cross-validated accuracy coming from the cv_accuracy function.  The default n_select of 07_select should be NULL with behavior that all predicted accessions be reported. Skip a column between the first and second blocks of the breeders_output.csv
+[2026-06-20 07:31:54] Oops.  I had made changes to config.R that I hadn't saved.
+[2026-06-20 12:37:06] There is an analysis bug somewhere because the Freeze damage phenotypes range from 0 to 9 but the Freeze damage GBLUPs range from -33 to +42.  The GBLUPS should be shrunken relative to the phenotypes.  I'm guessing there is something amiss with the relationship matrix that is used.  The diagonal elements dip all the way down to 0.2, which doesn't seem right, but I don't understand the theory of the EM combine well enough to understand why that might happen.  Please 1. Look at the theory and see if there is anything you can figure out. 2. for the currently set training population, look at a grid of different values for the pedigree and GRM df parameters, currently we have 30 and 60 respectively.  Try also 60 and 60; 100 and 200; 200 and 200; 200 and 400; and 400 and 400. Store them so I can look at them (compare diagonal elements and off-diagonal elements). You can leave the STDEV for GRM parameter where it is.
+[2026-06-20 13:29:35] <task-notification>
+<task-id>biwa2h644</task-id>
+<tool-use-id>toolu_014HY7wToJ4aWMuJ2LE5XKHq</tool-use-id>
+<output-file>/private/tmp/claude-1334918876/-Users-jj332-Documents-GitRepo-BrAPI-pipeline-for-selection/4cb0fb29-c75d-4e80-a34e-1b4a8b04771a/tasks/biwa2h644.output</output-file>
+<status>completed</status>
+<summary>Background command "Run the df-grid diagnostic" completed (exit code 0)</summary>
+</task-notification>
+[2026-06-20 14:31:52] In the genotypes.rds that gets saved by 04_find_genotyping there already are matching statistics.  The genotyping protocol with the highest matches 79.  So I don't understand why only 47 get left by the time G is compiled.  Shouldn't it at a minimum be 79?  Anyway, yes, please investigate this.  Something I still don't understand is I assume the diagonals of all of the partial GRMs all have values that are close to 1.  I don't think you save the partial GRMs, but that's something to look into.  A different thing to check: are you sure you are implementing the EM combine correctly?  There is a package that does it on GitHub devtools::install_github("denizakdemir/CovCombR").  My understanding is that package is very slow because by default it calculates the std error of every single cell in the combined matrix, which ends up being a huge computation.  So that needs to be avoided, hence the value of reconstructing the algorithm.  But I want to be sure it is reconstructed correctly.
+[2026-06-20 15:04:31] As far as I can tell, there are only 5 archived VCFs for proto66.  Please make a CSV that has the union of all markers in one column and presence of that marker for each of the VCFs in the next 5 columns.
+[2026-06-20 15:46:17] Before regenerating, I want to work on the fact that some of the diagonal elements in partial GRMs are very low.  A hypothesis is that you use mean imputation for missing marker data.  I pasted a function .impute_glmnet into grm_utils that does a slightly more sophisticaed imputation (using glmnet...).  Run an analysis to see if that reduces the frequency of low diagonal elements in the partial GRMs relative to mean imputation.
+[2026-06-20 16:07:16] Before regenerating, I want to work on the fact that some of the diagonal elements in partial GRMs are very low.  A hypothesis is that you use mean imputation for missing marker data.  I pasted a function .impute_glmnet into grm_utils that does a slightly more sophisticaed imputation (using glmnet...).  Run an analysis to see if that reduces the frequency of low diagonal elements in the partial GRMs relative to mean imputation.
+[2026-06-20 16:07:57] Before regenerating, I want to work on the fact that some of the diagonal elements in partial GRMs are very low.  A hypothesis is that you use mean imputation for missing marker data.  I pasted a function .impute_glmnet into grm_utils that does a slightly more sophisticaed imputation (using glmnet...).  Run an analysis to see if that reduces the frequency of low diagonal elements in the partial GRMs relative to mean imputation.
+[2026-06-20 16:28:39] run that for protocols 70 and 47
+[2026-06-20 16:43:36] OK.  How about we have a rule that you do imputation and build the GRM on all relevant accessions filling in with non-relevant accessions to the extent possible up to max(1000, n_relevant). So if n_relevant >=1000 then no filling in.  I still prefer glmnet imputation over mean imputation, and it sounds like you have figured out how to make that robust, so preferentially use that.
+[2026-06-20 17:42:14] Resume session
+[2026-06-20 17:46:36] yes, apply the BLAS optimization
+[2026-06-20 17:55:04] <task-notification>
+<task-id>b46jjillo</task-id>
+<tool-use-id>toolu_0191pDyA1synk7ozdUiUviwf</tool-use-id>
+<output-file>/private/tmp/claude-1334918876/-Users-jj332-Documents-GitRepo-BrAPI-pipeline-for-selection/6f6a71c8-a79e-4018-a145-507223c898de/tasks/b46jjillo.output</output-file>
+<status>completed</status>
+<summary>Background command "cd /Users/jj332/Documents/GitRepo/BrAPI_pipeline_for_selection
+cat &gt; /tmp/time_blas.R &lt;&lt;'EOF'
+suppressMessages(library(tidyverse))
+source(here::here("code","04_find_genotyping.R"))
+dosage_sub &lt;- read_rds(here::here("data","impute_diag_dosage.rds"))
+vdir &lt;- cache_path("vcf_cache")
+files &lt;- list("70"=file.path(vdir,"proto70_proj6920.vcf"),
+              "47"=c(file.path(vdir,"proto47_proj4351.vcf"),
+                     file.path(vdir,"proto47_proj4352.vcf")))
+set.seed(SEED)
+for (pid in names(files)) {
+  targets &lt;- rownames(dosage_sub[[pid]])
+  all_samples &lt;- unique(unlist(lapply(files[[pid]], .read_vcf_samples)))
+  t0 &lt;- Sys.time()
+  res &lt;- .protocol_grm(files[[pid]], keep_samples=targets, all_samples=all_samples)  # glmnet default
+  dt &lt;- as.numeric(difftime(Sys.time(), t0, units="secs"))
+  d &lt;- diag(res$grm)
+  cat(sprintf("proto %s GLMNET+BLAS: %.0fs | GRM %dx%d, %d markers | diag min=%.3f median=%.3f n&lt;0.8=%d\n",
+              pid, dt, nrow(res$grm), ncol(res$grm), ncol(res$dosage), min(d), median(d), sum(d&lt;0.8)))
+}
+EOF
+Rscript /tmp/time_blas.R 2&gt;&amp;1 | grep -v "^Loading\|workflowr\|Run ?wflow\|Attaching\|dplyr\|forcats\|lubridate\|purrr\|ggplot2\|readr\|tibble\|tidyr\|stringr\|Conflicts\|masks\|conflicted\|✔\|✖\|ℹ\|──\|here() starts\|thinning\|panel:\|glmnet impute:\|convergence\|maxit\|glmnet C"" completed (exit code 0)</summary>
+</task-notification>
+[2026-06-21 20:49:02] diag(G) looks better now with a range from 0.66 to 1.74. 0.66 is still lower than I might have expected, but OK.  Freeze damage GEBVs still range from -35 to +42 so the improvement in G was not mirrored by an improvement of the behavior of the estimates.  There are still only 52 accessions that get their values from markers + pedigree as opposed to being set at the mean.  A couple things to check out: 1. are the accessions that have extreme GEBV values the same as the accessions that have marker data? Or, are they the same as the ones that have low diagonal values?  2. Add an option to 06_stage2 for genomic prediction using sommer.  Make a scatterplot of the sommer output compared to the BGLR output for Freeze damage.
+[2026-06-21 21:19:41] do b.  In stage2_gblup, I'm going to rename K to relmat just because K is also the parameter name for BGLR, and I find that confusing.
+[2026-06-21 22:14:42] We had this same problem in the T3Predictathon2026 project and you built there a script build_synonym_map.R.  That script was in response to this prompt, which fits the situation we are in now: [2026-06-18 15:58:19] Earlier, we had an issue where you found a VCF that should cover some of the germplasm.  You downloaded it.  But it seemed like it didn't cover any of the germplasm.  I think the issue is that when we received the VCF it had samples under preliminary experimental line names.  Then those line names were given final experimental line names and the preliminary line names were moved to the synonyms field.  Thus, to make the connection, when you check to see if a VCF has relevant accessions, you have to look through all of the synonyms of your primary accession names.  This is a wrinkle that you need to add to the code, acknowledging that the wizard may find some genotyping project VCFs that have sample names that are not the primary names of the accessions but rather synonyms, even though those primary names are the key that you work with.  Cartoon code would be something like:
+primary_names <- c("ACC_ONE", "ACC_TWO", "ACC_THREE")
+resp <- brapi_connection$search("/germplasm", body = list(germplasmNames = primary_names))
+germplasm <- resp$combined_data
+syns <- germplasm$synonyms
+Incorporate this issue into the current code that you have for matching up archived VCFs with phenotyping data.
+  Since this code is needed for two different projects relating to T3, it needs to be generalized.  I'm thinking it should become part of T3_brapi_helpers.  Have a look at the T3_brapi_helpers project, and create functions to build a synonym map and I think a function to return primary names given any alias. See if you can make the functions that you build in T3_brapi_helpers useful to this selection pipeline project and for the T3Predictathon project.
+[2026-06-21 22:38:58] <task-notification>
+<task-id>blne8zeiw</task-id>
+<tool-use-id>toolu_01XNHe9yMrJCVFGockCTaJxJ</tool-use-id>
+<output-file>/private/tmp/claude-1334918876/-Users-jj332-Documents-GitRepo-BrAPI-pipeline-for-selection/6f6a71c8-a79e-4018-a145-507223c898de/tasks/blne8zeiw.output</output-file>
+<status>completed</status>
+<summary>Background command "cd /Users/jj332/Documents/GitRepo/BrAPI_pipeline_for_selection
+cat &gt; /tmp/t02.R &lt;&lt;'EOF'
+suppressMessages(library(testthat)); suppressMessages(library(tidyverse))
+source(here::here("tests","testthat","helper-setup.R"))
+test_file(here::here("tests","testthat","test-02-models.R"), reporter="summary")
+EOF
+Rscript /tmp/t02.R 2&gt;&amp;1 | grep -vE "^Loading|workflowr|Run .wflow|Attaching|dplyr|forcats|lubridate|purrr|ggplot2|readr|tibble|tidyr|stringr|Conflicts|masks|conflicted|✔|ℹ|──|here\(\) starts" | grep -iE "fail|error|Stage|RKHS|sommer|ETA|\$G|not equal|expect" | head -40" completed (exit code 0)</summary>
+</task-notification>
+[2026-06-21 22:41:23] <task-notification>
+<task-id>bo554zyvg</task-id>
+<summary>Monitor event: "test-02 green check after rename fix"</summary>
+<event>=== test-02 final ===
+[ FAIL 0 | WARN 0 | SKIP 0 | PASS 27 ]
+[ FAIL 0 | WARN 0 | SKIP 0 | PASS 28 ]
+[ FAIL 0 | WARN 0 | SKIP 0 | PASS 29 ]
+[ FAIL 0 | WARN 0 | SKIP 0 | PASS 30 ] Done!</event>
+</task-notification>
+[2026-06-21 22:41:23] <task-notification>
+<task-id>bo554zyvg</task-id>
+<tool-use-id>toolu_01CxwjFm7PiP8SQ81PnicsWk</tool-use-id>
+<output-file>/private/tmp/claude-1334918876/-Users-jj332-Documents-GitRepo-BrAPI-pipeline-for-selection/6f6a71c8-a79e-4018-a145-507223c898de/tasks/bo554zyvg.output</output-file>
+<status>completed</status>
+<summary>Monitor "test-02 green check after rename fix" stream ended</summary>
+</task-notification>
+[2026-06-22 08:56:09] I'm troubled by the difference in result between BGLR and sommer.  That's why I was poking around the .predict_one function and introduced bugs.  Please revert to having a named G = list(K = relmat, model = "RKHS") on line 57.  That's better form than relying on position.  On the other hand, I am genuinely uncomfortable with naming objects the same name as parameters in a function, so continue calling the kernel relmat.  Why is this difference between BGLR and sommer happening?  I'm confused about your logic surrounding the model and .resolve_model.  Let's make that simpler.  Even if there is only one marker protocol and you could use a Bayesian alphabet model applied to a marker matrix, let's always assume it will use a kernel.  Create a config parameters MIXED_MODEL_ENGINE that will be used to set the engine value in stage2_gblup. These changes will not resolve the BGLR / sommer difference.  Suggest experiments to understand this difference.
+[2026-06-22 09:11:06] Sure.  Do the first three for now.  sommer should be weighted anyway.
+[2026-06-22 09:20:06] Yes, run those experiments.  Note that it has to be possible for BGLR to generate good answers.  I'm guessing we are not using it right though I don't know what's wrong yet.
+[2026-06-22 09:30:10] Please continue to try to understand what's going on with BGLR.
+[2026-06-22 09:40:10] This seems like a significant problem for BGLR.  I assume there are no notes in its documentation about this.  I wonder if the authors are aware.  Please write write a polite .md that I can send to the BGLR authors explaining how we got here and your resolution.
+[2026-06-22 14:17:25] I tried run_pipeline.R with engine = sommer.  No refresh.  Also, wanting it to be done on all traits. Probably check the config.R to see that what I did was OK there. I got this error.  Error in `map()`:
+ℹ In index: 1.
+Caused by error in `map()`:
+ℹ In index: 1.
+Caused by error:
+! matrix multiplication: incompatible matrix dimensions: 150x150 and 119x119
+Run `rlang::last_trace()` to see where the error occurred.
+There were 44 warnings (use warnings() to see them)
+[2026-06-22 14:17:52] The error was during 5b. Cross-validated accuracy
+[2026-06-22 15:00:51] 1. Typically, with PIPELINE_REFRESH FALSE, the analysis should nevertheless redownload or regenerate every output it needs.  In moving from engine bglr to sommer, I don't want it to redownload everything, but I do want it to generate new predictions, etc.  I thought in the old version if trait weights were NULL that meant uniform 1 for all traits.  A logical alternative (let's do this) if weights are NULL, don't calculate the index.
+[2026-06-22 16:46:11] OK.  Still messing around comparing BGLR and sommer.  One last (I hope) sanity check that is not quite right is cross validated accuracy for Winter survival - percent|CO_350:0000170.  It's quite low for BGLR (negative) but quite high from sommer.  Suggest hypotheses and tests for this observation.
+[2026-06-22 17:05:17] I want to understand better why the genotypes at the 0 / 100 extremes got very very low SEs.
+[2026-06-22 17:17:49] Two issues. 1. replicate and blockNumber for this trial are identical.  Do you put both in as explanatory variables?  If so, there needs to first be a check that they are different and hopefully have low concordance.  2. This issue with with Winter survival in this trial is that there is no variation: ALL of the data points are 100.  So I'm surprised that the Stage-1 fit even worked.  Why did it?  Formally, there is no information about genotypic differences for winter survival in this trial.
+[2026-06-22 17:28:08] Implement both along with the guard about rep and block being different.
+[2026-08-14 09:47:27] Connecting to the T3 database can no longer be anonymous.  Set this up so there will be a .Renviron file with the username and password.  You can use code in the sibling project at ../T3Predictathon2026/scripts/Analysis_Claude/optimizer  .Renviron itself will be gitignored.  Create a .Renviron.example
+[2026-08-14 09:51:51] <task-notification>
+<task-id>a74d88891f1652b43</task-id>
+<tool-use-id>toolu_01PT5WaAx3Tq3WhA7rTz5osS</tool-use-id>
+<output-file>/private/tmp/claude-1334918876/-Users-jj332-Documents-GitRepo-BrAPI-pipeline-for-selection/dfa22fd1-bc5f-40c6-a34a-5c9043a59242/tasks/a74d88891f1652b43.output</output-file>
+<status>completed</status>
+<summary>Agent "Explore T3 connection auth code" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>Findings below.
+
+## Part 1 — `/Users/jj332/Documents/GitRepo/BrAPI_pipeline_for_selection`
+
+### `/Users/jj332/Documents/GitRepo/BrAPI_pipeline_for_selection/code/01_connect.R` (33 lines, entire file)
+
+```r
+# Step 1: connect to the T3/Oat BrAPI server.
+
+library(tidyverse)
+# NOTE: BrAPI.R calls timeout() (from httr) unqualified, so httr must be
+# attached to the search path for any conn$get()/conn$search() call to work.
+library(httr)
+here::i_am("code/01_connect.R")
+
+source(here::here("code", "config.R"))
+
+#' Connect to a T3/Breedbase BrAPI server.
+#'
+#' Uses anonymous (public) access by default. Set `login = TRUE` to authenticate
+#' with the T3_USER / T3_PASS environment variables -- needed only for restricted
+#' data or if a public call unexpectedly returns HTTP 401.
+#'
+#' @param db_name Pre-configured BrAPI connection name (see BrAPI::listBrAPIConnections()).
+#' @param login   Whether to authenticate using T3_USER / T3_PASS env vars.
+#' @return A BrAPI connection object.
+connect_t3 &lt;- function(db_name = DB_NAME, login = FALSE) {
+  conn &lt;- BrAPI::getBrAPIConnection(db_name)
+  if (login) {
+    user &lt;- Sys.getenv("T3_USER")
+    pass &lt;- Sys.getenv("T3_PASS")
+    if (nzchar(user) &amp;&amp; nzchar(pass)) {
+      conn$login(user, pass)
+    } else {
+      warning("login = TRUE but T3_USER / T3_PASS are not set; continuing anonymously.")
+    }
+  }
+  conn
+}
+```
+
+Behavior notes:
+- Env var names here are `T3_USER` / `T3_PASS` (NOT the sibling repo's `T3_USERNAME` / `T3_PASSWORD`).
+- Default is `login = FALSE` -&gt; pure anonymous. Missing creds only *warn*; the run continues anonymously and then silently 401s downstream.
+- `conn$login(user, pass)` is positional; the installed BrAPI 0.8.4 signature is `login(username = NULL, password = NULL, token = NULL)`, so positional mapping is correct. Important gotcha: if both are NULL/empty the BrAPI method falls back to `readline("Username: ")` + `askpass()` — i.e. it *prompts* and would hang a non-interactive run. The current code avoids that by only calling `login()` when both are `nzchar`.
+- Connection object (BrAPI 0.8.4 R6 `BrAPIConnection`, installed at `/Users/jj332/Library/R/arm64/4.5/library/BrAPI`):
+  - public fields: `protocol, host, path, version, params, is_breedbase, auth_token`
+  - public methods: `initialize, base, login, get, post, put, search, wizard, filter_geno_protocols, filter_geno_projects, vcf, vcf_archived_list, vcf_archived, vcf_imputed, clone`
+  - `BrAPI::getBrAPIConnection("T3/Oat")` resolves to `oat.triticeaetoolbox.org [v2]` from the package's known-connection list.
+- `conn$login()` body: `POST /token` with `body = list(username=, password=)`, `encode="multipart"`, storing `self$auth_token &lt;- resp$content$access_token`. It returns normally on a rejected password, leaving `auth_token` NULL (this is exactly the failure mode the sibling repo guards against).
+
+### `code/config.R`
+`/Users/jj332/Documents/GitRepo/BrAPI_pipeline_for_selection/code/config.R` has **no auth-related settings at all**. The only connection-relevant line is `DB_NAME &lt;- "T3/Oat"` (line 9). Everything else is geography/traits/genotyping/model params. Paths helpers at the bottom: `cache_path()` -&gt; `data/`, `output_path()` -&gt; `output/`.
+
+### `.gitignore`
+`/Users/jj332/Documents/GitRepo/BrAPI_pipeline_for_selection/.gitignore` (25 lines) ignores `.Rproj.user, .Rhistory, .RData, .Ruserdata, .Rapp.history, .DS_Store`, `analysis/figure|*png|*html|*_cache|site_libs`, `data/*` (except `data/README.md`), `output/*` (except `output/README.md`), `docs/*.html`, `docs/figure/`, `docs/site_libs/`.
+**It does NOT ignore `.Renviron`.** That line would have to be added.
+
+### `.Renviron` / `.Renviron.example`
+Neither exists anywhere in this repo (confirmed by `ls` on the root and the full file listing; `git status` shows no untracked env file). `.Rprofile` exists (workflowr loader + a macOS `Sys.unsetenv` of `MallocStackLogging*`) and contains no credential handling.
+
+### `Sys.getenv` references across the repo (only two sites)
+- `/Users/jj332/Documents/GitRepo/BrAPI_pipeline_for_selection/code/01_connect.R:23-24` — `T3_USER`, `T3_PASS`
+- `/Users/jj332/Documents/GitRepo/BrAPI_pipeline_for_selection/tests/testthat/test-03-live.R:6` — `RUN_LIVE_TESTS`
+
+### Tests
+- `/Users/jj332/Documents/GitRepo/BrAPI_pipeline_for_selection/tests/testthat/test-03-live.R` — all four tests call `connect_t3()` with **no arguments**, i.e. anonymous. Gate:
+```r
+skip_if_no_live &lt;- function() {
+  if (!nzchar(Sys.getenv("RUN_LIVE_TESTS"))) {
+    skip("live tests disabled (set RUN_LIVE_TESTS=true to enable)")
+  }
+}
+```
+  Tests: `connect_t3 returns a usable connection`, `find_ny_trials ... (radius mode)`, `get_phenotypes ...`, `find_and_get_genotypes ... protocol_id = "66"`. If anonymous stops working, all four break at the first real call, and the first test (`expect_true(is.function(conn$get) || inherits(conn, "R6"))`) would still pass since it never hits the network.
+- `/Users/jj332/Documents/GitRepo/BrAPI_pipeline_for_selection/tests/run_tests.R` — 7 lines; `testthat::test_dir(here::here("tests","testthat"), stop_on_failure = TRUE)`; documented invocation `RUN_LIVE_TESTS=true Rscript tests/run_tests.R`. No credential handling.
+- `/Users/jj332/Documents/GitRepo/BrAPI_pipeline_for_selection/tests/README.md` — describes tier 3 as "Hits T3/Oat: connect, find NY trials, pull phenotypes, build a GRM from the Oat 3K protocol. Skipped unless `RUN_LIVE_TESTS` is set." No mention of credentials.
+- `/Users/jj332/Documents/GitRepo/BrAPI_pipeline_for_selection/tests/testthat/helper-setup.R` provides `fake_conn` (offline mock). Note `code/synonyms.R:58` guards `if (!is.function(conn$search))` for that mock.
+
+### Documented mentions of anonymous connection (all need updating)
+- `README.md:86` — `conn   &lt;- connect_t3()                                  # 1. connect (public/anon)`
+- `README.md:139-140` — "**Access** is anonymous/public by default. Set `login = TRUE` in `connect_t3()` (reads `T3_USER` / `T3_PASS` env vars) only if a call returns HTTP 401."
+- `DESIGN.md:23` — `01_connect          conn        connect to T3/Oat over BrAPI (anonymous)`
+- `CLAUDE.md:47` — `01_connect        conn     T3/Oat BrAPI connection (anonymous; login fallback)`
+- `BACKGROUND.md:22` — "**Anonymous access** is sufficient for the phenotype and (archived) genotype data used here; login is wired as a fallback only."
+- `code/README.md:13` — `| `01_connect.R` | `connect_t3()` | Connect to T3/Oat (anonymous; optional login) |`
+- Call sites that would need no change if `connect_t3()` defaults flip: `code/run_pipeline.R:32`, `code/df_grid_diagnostic.R:32`, `analysis/brapi_selection_pipeline.Rmd:39`, and the four in `test-03-live.R`.
+- The download path that most needs the token: `code/04_find_genotyping.R:211` (`conn$vcf_archived_list(...)`) and `:226` (`conn$vcf_archived(output=, genotyping_project_id=, file_name=)`), both wrapped in `tryCatch(..., error = function(e) NULL/FALSE)` — so an unauthenticated failure currently degrades to "download failed; may be too large" warnings rather than a clear 401.
+- Your own prompt log records the request at `docs/Claude_code_prompts.txt:157`.
+
+## Part 2 — `/Users/jj332/Documents/GitRepo/T3Predictathon2026/scripts/Analysis_Claude/optimizer`
+
+Auth lives in `/Users/jj332/Documents/GitRepo/T3Predictathon2026/scripts/Analysis_Claude/optimizer/R/data_access.R`, under the header `# --- BrAPI auth + retry ---`.
+
+### `t3_login()` / `t3_connect()` — verbatim (data_access.R lines ~118-149)
+
+```r
+# Log in from T3_USERNAME / T3_PASSWORD in the environment. Never prompts -- a prompt hangs a
+# background run. conn$login() mutates the connection, storing the bearer token on it.
+t3_login &lt;- function(conn, settings = NULL) {
+  user &lt;- Sys.getenv("T3_USERNAME"); pass &lt;- Sys.getenv("T3_PASSWORD")
+  if (!nzchar(user) || !nzchar(pass))
+    # Its own class: a setup error, so .brapi_try fails fast instead of retrying.
+    stop(structure(
+      class = c("t3_missing_credentials", "error", "condition"),
+      list(message = paste("T3 login needs T3_USERNAME and T3_PASSWORD in the environment.",
+             "Copy .Renviron.example to .Renviron, fill it in, and RESTART R --",
+             ".Renviron is read only at startup, so editing it mid-session does nothing.",
+             "Check with Sys.getenv(\"T3_USERNAME\")."),
+           call = NULL)))
+  conn$login(username = user, password = pass)
+  # login() returns normally on a rejected password, leaving auth_token NULL -- LESSONS #27.
+  if (!nzchar(conn$auth_token %||% ""))
+    stop(structure(
+      class = c("t3_bad_credentials", "error", "condition"),
+      list(message = paste0(
+             "T3 login was REJECTED for user '", user, "' -- the server issued no token ",
+             "(look for an 'Incorrect Password' warning above). Fix T3_USERNAME / ",
+             "T3_PASSWORD in .Renviron ON THIS MACHINE and RESTART R -- .Renviron is read ",
+             "only at startup."),
+           call = NULL)))
+  invisible(conn)
+}
+
+# Construct a connection AND log it in -- the single place a connection is made.
+t3_connect &lt;- function(settings) {
+  conn &lt;- BrAPI::createBrAPIConnection(settings$brapi_host, is_breedbase = TRUE)
+  t3_login(conn, settings)
+  conn
+}
+```
+
+### 401 detection + auto re-login retry wrapper — verbatim (same file, lines ~151-208)
+
+```r
+# T3 surfaces an unauthenticated call as a WARNING plus an empty response, never an error, so
+# auth failure is detected two ways: the warning text and the response status.
+.is_auth_warning &lt;- function(msg)
+  grepl("unauthor|must login|permission to access|\\b401\\b", msg, ignore.case = TRUE)
+
+.response_auth_failed &lt;- function(r) {
+  # [["status"]], not $status: $ on a tibble lacking the column warns.
+  if (!is.list(r) || is.null(r[["status"]])) return(FALSE)
+  # status is a flat httr::http_status list (wizard) or a per-page list of them (search), so
+  # flatten either shape and scan.
+  msgs &lt;- tryCatch(as.character(unlist(r[["status"]], use.names = FALSE)),
+                   error = function(e) character())
+  any(grepl("unauthor|\\b401\\b", msgs, ignore.case = TRUE))
+}
+
+# Retry a BrAPI call through a flaky server, and re-authenticate on a 401. `thunk` is zero-arg,
+# re-evaluated each attempt; transport errors retry with exponential backoff + jitter up to
+# `tries`. A 401 triggers one re-login and a free retry that does not consume an attempt.
+# conn = settings = NULL skips re-auth and leaves the pure retry loop.
+.brapi_try &lt;- function(thunk, conn = NULL, settings = NULL, tries = NULL,
+                       base_delay = 2, what = "BrAPI call") {
+  if (is.null(tries)) tries &lt;- .brapi_tries(settings)
+  tries &lt;- max(1L, as.integer(tries))
+  last &lt;- NULL; relogins &lt;- 0L; max_relogin &lt;- 2L; attempt &lt;- 0L
+  while (attempt &lt; tries) {
+    attempt &lt;- attempt + 1L
+    auth_fail &lt;- FALSE
+    r &lt;- withCallingHandlers(
+      tryCatch(thunk(), error = function(e) { last &lt;&lt;- e; e }),
+      warning = function(w) {
+        if (.is_auth_warning(conditionMessage(w))) {          # swallow only auth warnings
+          auth_fail &lt;&lt;- TRUE; invokeRestart("muffleWarning")  # (others propagate normally)
+        }
+      })
+    is_err   &lt;- inherits(r, "error")
+    auth_fail &lt;- auth_fail || (!is_err &amp;&amp; .response_auth_failed(r))
+    if (!is_err &amp;&amp; !auth_fail) return(r)                      # success
+
+    # 401 -&gt; re-login and retry the same thunk with the refreshed token. Bounded by
+    # max_relogin so a token that stays unauthorized after login cannot loop forever.
+    if (auth_fail &amp;&amp; !is.null(conn) &amp;&amp; !is.null(settings) &amp;&amp; relogins &lt; max_relogin) {
+      relogins &lt;- relogins + 1L
+      lr &lt;- tryCatch({ t3_login(conn, settings); TRUE }, error = function(e) { last &lt;&lt;- e; e })
+      if (isTRUE(lr)) {
+        message(sprintf("%s: was unauthorized -- logged in, retrying", what))
+        attempt &lt;- attempt - 1L; next                         # free retry (fresh token)
+      }
+      message(sprintf("%s: re-login FAILED: %s", what, conditionMessage(lr)))
+      # A setup error, not a transient one: fail fast rather than burn the retry budget.
+      if (inherits(lr, c("t3_missing_credentials", "t3_bad_credentials"))) stop(lr)
+    }
+    if (attempt &lt; tries) {
+      msg &lt;- if (is_err) conditionMessage(r) else "unauthorized"
+      message(sprintf("%s failed (%d/%d): %s -- retrying", what, attempt, tries, msg))
+      Sys.sleep(base_delay * 2^(attempt - 1L) + stats::runif(1))
+    }
+  }
+  if (!is.null(last)) stop(last)
+  stop(sprintf("%s failed: unauthorized and login did not resolve it", what))
+}
+```
+Also `.brapi_tries &lt;- function(settings = NULL) as.integer((settings$brapi_tries %||% 4L))`.
+
+Usage example (VCF download, `/Users/jj332/Documents/GitRepo/T3Predictathon2026/scripts/Analysis_Claude/optimizer/R/genotypes.R:216`):
+```r
+.brapi_try(function() conn$vcf_archived(output = base, genotyping_project_id = project_id),
+           conn = conn, settings = settings, tries = plan$tries, base_delay = plan$base_delay,
+           what = sprintf("VCF download %s (attempt %d)", pid, plan$n + 1L))
+```
+
+### Exact environment variable names
+`T3_USERNAME`, `T3_PASSWORD` (credentials); plus `OPTIMIZER_HOME`, `OPTIMIZER_REMOTE`, `OPTIMIZER_WORKER`, `R_LIBS_USER` (non-auth, same file).
+
+### `.Renviron` and `.Renviron.example`
+- `/Users/jj332/Documents/GitRepo/T3Predictathon2026/scripts/Analysis_Claude/optimizer/.Renviron` — **exists** (791 bytes, real credentials; keys present: `T3_USERNAME = ...`, `T3_PASSWORD = ...`, and a commented-out `# OPTIMIZER_HOME=`). Note the style uses spaces around `=`, which R tolerates. I did not print the values.
+- `/Users/jj332/Documents/GitRepo/T3Predictathon2026/scripts/Analysis_Claude/optimizer/.Renviron.example` — **exists**, verbatim:
+
+```
+# T3 / Triticeae Toolbox BrAPI login credentials.
+#
+# Copy this file to `.Renviron` (same folder) and fill in your real credentials.
+# `.Renviron` is gitignored -- never commit it. R reads `.Renviron` once at startup, so
+# after editing it you must restart R for the change to take effect.
+#
+# t3_login() / t3_connect() (R/data_access.R) read these; .brapi_try() re-reads them to
+# re-authenticate when the server returns HTTP 401 (e.g. after the token expires).
+
+T3_USERNAME=your_t3_username
+T3_PASSWORD=your_t3_password
+
+# Put permanent files (state/, logs/, cache backup) in durable HOME storage rather than the
+# working directory when running on a remote server.
+# NOTE: SETTING THIS TURNS ON REMOTE MODE AUTOMATICALLY:
+# settings.R derives remote_server from it, so you never edit the tracked file
+# Leave it unset on a laptop for local mode.
+OPTIMIZER_HOME=/home/directory/t3_optimizer
+
+# Optional: force remote mode on/off regardless of OPTIMIZER_HOME (true/false/yes/no/1/0).
+# Rarely needed -- the OPTIMIZER_HOME auto-detect above is usually enough.
+# OPTIMIZER_REMOTE=true
+
+# Optional: personal R library, for clusters where you install packages yourself rather than
+# using a container. R reads exactly ONE .Renviron -- the working directory's if it exists,
+# otherwise $HOME's -- and it does not merge them. Since this project always runs from the
+# optimizer directory, a ~/.Renviron holding R_LIBS_USER would NEVER BE READ and packages
+# would land in the default library (on a cluster, inside a small home quota). So it belongs
+# here, next to the credentials. %v expands to the R version.
+# Confirm with: Rscript -e '.libPaths()'   -- your path must come first.
+# R_LIBS_USER=/project/&lt;account&gt;/R_packages/%v
+```
+
+### Is `.Renviron` gitignored there?
+Yes. `/Users/jj332/Documents/GitRepo/T3Predictathon2026/scripts/Analysis_Claude/optimizer/.gitignore` line 11 is exactly `.Renviron` (also ignores `.Rprofile`, `settings.local.R`, `state/*`, `cache/*`, `logs/*`, `container/*.sif`, `container/submit.local.sh`). `.Renviron.example` is NOT ignored, i.e. it is tracked.
+
+### Supporting patterns worth copying
+- **Never prompt**: `conn$login()` prompts interactively when args are NULL; `t3_login` fails fast with a typed condition instead. Two condition classes: `t3_missing_credentials`, `t3_bad_credentials`.
+- **Rejected-password detection**: `if (!nzchar(conn$auth_token %||% "")) stop(...)` — BrAPI's `login()` does not error on bad credentials.
+- **Preflight** (`/Users/jj332/Documents/GitRepo/T3Predictathon2026/scripts/Analysis_Claude/optimizer/diagnose_failures.R:104-113`):
+```r
+if (!file.exists(".Renviron"))
+  stop("no .Renviron in the working directory -- cd to the optimizer folder and re-run.\n", ...)
+cat("  T3_USERNAME:       ", Sys.getenv("T3_USERNAME"), "\n", sep = "")
+cat("  T3_PASSWORD:       ", if (nzchar(Sys.getenv("T3_PASSWORD"))) "set" else "EMPTY", "\n", sep = "")
+conn &lt;- t3_connect(settings)     # raises t3_bad_credentials if the server issues no token
+cat("  login:             OK (token ", nchar(conn$auth_token), " chars)\n", sep = "")
+```
+- **Working-directory caveat, documented repeatedly**: R reads `.Renviron` from the working directory only (no parent walk) — `RUNBOOK_SLURM.md:311, 987-993`, `RUNBOOK_INTERACTIVE.md:31, 113, 133, 148`, `optimizer_paths.sh:37-38`, `container/run_in_container.sh:15, 79` ("without it every BrAPI call runs anonymous"). This matters for the pipeline repo since it uses `here::i_am()`/workflowr and may be run from `analysis/` or via `wflow_build()`; a `readRenviron(here::here(".Renviron"))` call inside `connect_t3()` would make it robust.
+- Connection construction differs: the optimizer uses `BrAPI::createBrAPIConnection(settings$brapi_host, is_breedbase = TRUE)` with `brapi_host = "wheat.triticeaetoolbox.org"` (`settings.R:221`), whereas the pipeline uses `BrAPI::getBrAPIConnection("T3/Oat")`. Both yield the same R6 object with `$login()` and `$auth_token`, so `t3_login()` ports over unchanged.
+- Test pattern for credentials without a network: `/Users/jj332/Documents/GitRepo/T3Predictathon2026/scripts/Analysis_Claude/optimizer/tests/test_subtasks.R:84-165` saves/sets/unsets `T3_USERNAME`/`T3_PASSWORD` around assertions and restores them afterwards.</result>
+<usage><subagent_tokens>52118</subagent_tokens><tool_uses>29</tool_uses><duration_ms>253465</duration_ms></usage>
+</task-notification>
+[2026-08-14 11:54:05] The overall pipeline includes a number of steps and within each step possibly multiple analyses.  What reporting and progress bars are in place so that the user knows what is going on / how long it is going to take?  Please plan for some visual reporting of progres.
+[2026-08-14 11:58:05] <task-notification>
+<task-id>aada8246eb8a1878f</task-id>
+<tool-use-id>toolu_018MqJthmb7oNgVSNwDuxVeG</tool-use-id>
+<output-file>/private/tmp/claude-1334918876/-Users-jj332-Documents-GitRepo-BrAPI-pipeline-for-selection/dfa22fd1-bc5f-40c6-a34a-5c9043a59242/tasks/aada8246eb8a1878f.output</output-file>
+<status>completed</status>
+<summary>Agent "Inventory progress reporting in pipeline" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>I have everything I need. Here is the complete inventory.
+
+---
+
+# Progress &amp; status reporting inventory
+
+## 0. Big picture
+
+There are exactly **3 progress bars** in the whole pipeline, **2 mechanisms** (purrr `.progress` → cli; `utils::txtProgressBar`), and **no timing/ETA code of any kind** other than what those bars render themselves. Everything else is bare `message()` / `cat()` / `warning()`.
+
+---
+
+## 1. Every progress bar
+
+### 1a. `code/03_get_phenotypes.R:34-61` — purrr `.progress` (cli-backed)
+
+```r
+34  rows &lt;- map(as.character(study_ids), function(sid) {
+...
+60  }, .progress = "Phenotypes: downloading by study") |&gt;
+61    list_rbind()
+```
+- Mechanism: `purrr::map(.progress = &lt;string&gt;)`, which internally builds a `cli::cli_progress_bar()` (purrr 1.2.2, cli 3.6.6 installed). This is the only place ETA/elapsed is displayed, and only because cli renders it.
+- Wraps: the outer loop over **studies** (one `/observationunits?includeObservations=true` BrAPI call per study, `page="all", pageSize=500`).
+- Total: `length(study_ids)` — implicit, purrr takes it from the input vector length. No per-study sub-progress (the inner `map_dfr` over observation units at line 39 is unbarred).
+
+### 1b. `code/04_find_genotyping.R:527-530` — purrr `.progress`
+
+```r
+527  files_by_proto &lt;- set_names(
+528    map(proto_ids, ~ .download_protocol_files(conn, .x),
+529        .progress = "Genotypes: downloading VCFs by protocol"),
+530    proto_ids)
+```
+- Wraps: the loop over **genotyping protocols**, each of which downloads 1..n archived project VCFs.
+- Total: `length(proto_ids)` (all protocols with `n_covered &gt; 0`, or the single `GENO_PROTOCOL_ID`).
+- Granularity problem worth noting: the unit of work is a *protocol*, but the actual cost is per multi-GB VCF file inside `.download_protocol_files()`; the inner `for (i in seq_len(nrow(arch)))` loop (line 218) has no bar, only a `message()` at line 222.
+
+### 1c. `code/em_covariance_combiner.R:85-112` — `utils::txtProgressBar`
+
+```r
+85    pb &lt;- txtProgressBar(min = 0, max = max_iter, style = 3)
+86    for (iter in 1:max_iter) {
+87      setTxtProgressBar(pb, iter)
+...
+107      if (max(abs(psi - psi_old)) &lt; tol) {
+108        message("\nConverged at iteration ", iter)
+109        break
+110      }
+111    }
+112    close(pb)
+```
+- Mechanism: base `utils::txtProgressBar`, `style = 3` (bar + percentage; **no ETA, no elapsed**).
+- Wraps: the **EM iterations** of `EMCovarianceCombiner()`.
+- Total: `max_iter`, default `100` (signature at line 74: `max_iter = 100, tol = 1e-6, track_loglik = TRUE`). Never passed by the caller (`04_find_genotyping.R:599-600`), so it is always 100. Because it converges early, the bar typically stops partway and never reaches 100% — the `message("\nConverged at iteration ", iter)` at line 108 is what tells you it finished.
+- The inner `for (i in seq_along(partial_covs))` E-step loop (line 96) has no progress; each iteration does a full `compute_conditional_expectation()` on an `n_vars × n_vars` matrix.
+
+### Bars that do NOT exist (long loops running silently)
+- `code/grm_utils.R:93` `for (k in imputeOrder)` — glmnet imputation, one `cv.glmnet` per marker, up to ~10-17k markers. The comment at line 68 says this "dominated runtime … ~40 min for a 17k-marker protocol". **No progress output at all**, only a post-hoc fallback count (line 116-120).
+- `code/05_stage1_blues.R:90` `group_modify()` over trait × study — no bar.
+- `code/06_stage2_genomic_prediction.R:165` `map_dfr(traits, ...)` — no bar.
+- `code/06_stage2_genomic_prediction.R:188` `map_dfr(1:k, ...)` CV folds — no bar.
+- `code/04_find_genotyping.R:562` `for (pid in names(files_by_proto))` GRM build — messages only.
+- `code/04_find_genotyping.R:440` `for (csv in names(group_members))` pedigree groups — summary message only.
+
+---
+
+## 2. Every user-facing `message()` / `cat()` / `warning()` / `print()`, by file
+
+### `code/config.R`
+| Line | Kind | Text |
+|---|---|---|
+| 48-49 | warning-ish message | `message("config_lines(", basename(path), "): dropping ", length(dup), " duplicate value(s), e.g. ", paste(head(dup, 3), collapse = ", "))` |
+
+That is the only console output in config.R. (Everything else is `stop()` for contract violations.)
+
+### `code/01_connect.R`
+**No `message`/`cat`/`warning` at all.** Only two typed `stop()` conditions: `t3_missing_credentials` (41-48) and `t3_bad_credentials` (55-62). Note line 52-53's comment: a rejected password only *warns* from `conn$login()` (a warning emitted by BrAPI.R, not by this repo).
+
+There is **no "connecting to T3…" announcement** — step 1 is entirely silent on success.
+
+### `code/02_find_trials.R` — warnings only, no announcements
+| Line | Kind | Text |
+|---|---|---|
+| 91-92 | warning | `warning("TRAINING_TRIALS not found on the server: ", paste(missing, collapse = ", "))` |
+| 113-114 | warning | `warning("TEST_TRIALS not found on the server: ", paste(missing, collapse = ", "))` |
+
+No message when it starts pulling `/locations` (line 24) or `/studies` (line 40) — both are `page="all", pageSize=1000` calls that can be slow and are completely silent.
+
+### `code/03_get_phenotypes.R`
+Only the progress bar label (line 60). **No result summary** inside the function — the "Observations: N" summary lives in the callers (`run_pipeline.R:42-44`, Rmd chunk `pheno`).
+
+### `code/04_find_genotyping.R` — the noisiest file
+Starting/announcement:
+| Line | Text |
+|---|---|
+| 222-224 | `message("  downloading protocol ", protocol_id, " project ", arch$project_id[i], " (", i, "/", nrow(arch), "); large GBS files may take a while...")` — hand-rolled "i/n" counter, the closest thing to a second-level progress indicator |
+| 563 | `message("Building GRM for protocol ", pid)` |
+
+Result-summary:
+| Line | Text |
+|---|---|
+| 118-119 | `message(sprintf("  thinning %s: %d -&gt; %d markers (every %dth)", basename(path), nm, kept, n))` |
+| 271-272 | `message(sprintf("  panel: %d relevant + %d filler = %d accessions", length(relevant), length(fill), length(panel)))` |
+| 457-458 | `message("Pedigree: ", length(partials), " group matrix(es) overlap our accessions/bridges.")` |
+| 460-461 | `message("Pedigree: no precomputed group matrices overlap our accessions/bridges.")` |
+| 621-622 | `message("Injected ", length(inject), " ungenotyped/unpedigreed training accession(s) into G (diag = ", round(diag_val, 3), ", off-diag = 0).")` |
+
+Degradation / skip notices (message, not warning):
+| Line | Text |
+|---|---|
+| 351-352 | `message("Germplasm cache not found (", cache, "); pedigree bridges limited to phenotyped accessions.")` |
+| 386-389 | `message(length(miss), " TEST_ACCESSIONS could not be resolved to a germplasmDbId (predicted only if present in a selected protocol/pedigree by name): ", …head(miss,10)…)` |
+| 402 | `message("Pedigree dir not found (", pedigree_dir, "); skipping pedigree stitch.")` |
+| 566 | `message("  no usable markers; skipping")` |
+
+Warnings:
+| Line | Text |
+|---|---|
+| 232-233 | `warning("Skipping project ", arch$project_id[i], " of protocol ", protocol_id, " (download failed; may be too large).")` |
+| 266-267 | `warning("parse failed: ", basename(f), " (", conditionMessage(e), ")")` |
+
+Note the leading-two-space indentation convention (`"  downloading…"`, `"  thinning…"`, `"  panel:"`, `"  no usable markers"`) is the only hierarchy signal — there is no structured nesting.
+
+### `code/synonyms.R`
+| Line | Kind | Text |
+|---|---|---|
+| 52-54 | message (degradation) | `"USE_SYNONYMS = TRUE but T3_brapi_helpers is unavailable (install it or clone it next to this repo); using exact-name match."` |
+| 59-60 | message (degradation) | `"BrAPI connection has no $search method; skipping synonym lookup."` |
+| 65 | **verbosity pass-through** | `build_synonym_lookup(names, brapi_connection = conn, verbose = TRUE)` — external helper prints its own output; this repo does not control it |
+| 67-68 | warning | `warning("Synonym lookup failed (", conditionMessage(e), "); falling back to exact-name match.")` |
+| 72-73 | result summary | `message(sprintf("Synonym map: %d aliases over %d accessions (%d synonym aliases).", length(lk), length(names), n_syn))` |
+
+### `code/grm_utils.R`
+| Line | Kind | Text |
+|---|---|---|
+| 117-119 | result summary | `message(sprintf("  glmnet impute: %d markers fit, %d fell back to mean ", n_glm, n_fallback), "(near-monomorphic / degenerate CV).")` — only emitted `if (n_fallback &gt; 0)` (line 116) |
+
+### `code/05_stage1_blues.R` — skip notices only
+| Line | Kind | Text |
+|---|---|---|
+| 92 | message | `sprintf("Skipping %s / study %s: &lt;2 genotypes.", key$trait, key$studyDbId)` |
+| 96-97 | message | `sprintf("Skipping %s / study %s: response is constant (no estimable genotypic signal).", …)` |
+| 101-102 | message | `sprintf("Skipping %s / study %s: %s", key$trait, key$studyDbId, conditionMessage(e))` |
+
+No "fitting trait X in study Y" announcement, no count of groups. On a large run these skip messages are the *only* sign of life, and they scroll unbounded.
+
+### `code/06_stage2_genomic_prediction.R`
+**Zero `message`/`cat`/`warning`/`print`.** Completely silent — the single longest-running step (MCMC) prints nothing.
+
+### `code/07_select.R`
+**Zero console output.** Writes `output/breeders_output.csv` at 108-109 and returns invisibly; the "written to …" line is printed by the caller.
+
+---
+
+## 3. Top-level function structure, caching, and units of work
+
+| Step | Signature (file:line) | Cache | Main loops / nesting |
+|---|---|---|---|
+| 1 | `connect_t3(db_name = DB_NAME, login = TRUE)` — `01_connect.R:77` | none | none (single login round-trip) |
+| 2 | `find_ny_trials(conn, center_lat, center_lon, radius_km, years, study_types, training_trials, test_trials, refresh = FALSE)` — `02_find_trials.R:63-69` | `cache &lt;- cache_path("ny_trials.rds")`; `if (!refresh &amp;&amp; file.exists(cache)) return(read_rds(cache))` (70-71); `write_rds(out, cache)` (119) | 2 paged BrAPI GETs (`get_locations` 24, `get_studies` 40) + `map_dfr` over the returned records. Flat. |
+| 3 | `get_phenotypes(conn, study_ids, trait_names = TRAIT_NAMES, refresh = FALSE)` — `03_get_phenotypes.R:29-30` | `cache_path("phenotypes.rds")` (31-32); `write_rds(out, cache)` (76) | **Loop 1: studies** (34, barred). **Loop 2 (nested): observation units** per study (39, unbarred). 2 levels. |
+| 4 | `find_and_get_genotypes(conn, train_accessions, test_accessions, test_names, protocol_id, pedigree_dir, grm_df_mean, grm_df_stdev, pedigree_df, save_partials = FALSE, refresh = FALSE)` — `04_find_genotyping.R:658-667` | `cache_path("genotypes.rds")` (668-669); `write_rds(out, cache)` (685). Also a *secondary disk cache* of the raw VCFs at `cache_path("vcf_cache")` (215-216, skip if `file.exists(dest)`), and an optional `data/genotype_partials.rds` (675-676) | Deepest step; delegates to `.genotype_partials()` (485) then `.combine_to_G()` (588). Units of work in order: ① `build_alias_lookup` (1 BrAPI search); ② `.safe_coverage` × 2 (517-518); ③ **protocols → project VCFs** download (528 barred / 218 unbarred inner); ④ **protocols → VCF files** header read (551); ⑤ **protocols → files → markers**: `for (pid …)` (562) → `for (f in files)` (264) → thin/read → `.qc_markers` → `.impute_glmnet` **per-marker loop** (`grm_utils.R:93`) — 3-4 levels deep and the deepest is the unbarred one; ⑥ **pedigree groups** `for (csv …)` (440); ⑦ **EM iterations × partials** (`em_covariance_combiner.R:86` / `96`) |
+| 5 | `stage1_blues(pheno)` — `05_stage1_blues.R:82` | **none** — no cache at all; recomputed every run | `group_by(trait, studyDbId) |&gt; group_modify(...)` (89-105); one `lme4::lmer` (or `lm` fallback) per **trait × study** cell. 1 level, but the natural total is `n_traits × n_studies`, which is never computed or shown. |
+| 6 | `stage2_gblup(blues, geno, traits = NULL, engine = MIXED_MODEL_ENGINE, nIter = BGLR_NITER, burnIn = BGLR_BURNIN, seed = SEED, refresh = FALSE)` — `06:142-144` | `cache_path(if (engine=="sommer") "gebv_sommer.rds" else "gebv.rds")` (146); **validated** cache reuse at 157-163 (`setequal(unique(cached$genotype), rownames(relmat)) &amp;&amp; all(traits %in% cached$trait)`), `write_rds` (171) | **Loop: traits** `map_dfr(traits, …)` (165) → one `.predict_engine()` per trait → one full BGLR MCMC (12000 iter / 2000 burn-in) or one sommer REML. Also a per-call `eigen(relmat)` at line 63 (dense n×n, silent, can take minutes on a large G). 1 level. |
+| 6b | `cv_accuracy(blues, geno, trait, k = 5, engine = MIXED_MODEL_ENGINE, nIter = 6000, burnIn = 1000, seed = SEED)` — `06:177-178` | **none** — never cached; `run_pipeline.R:63` `saveRDS(cv, output_path("trait_cvs.rds"))` saves the result but nothing reads it back | **Loop: folds** `map_dfr(1:k, …)` (188), one full model fit per fold. Callers wrap it in a **trait** loop (`run_pipeline.R:61`, Rmd:118), so the real nesting is **traits × k folds** = `n_traits × 5` model fits, each re-doing `eigen(relmat)` inside `.predict_one` (line 63). This is almost certainly the single biggest silent block in the pipeline. |
+| 7 | `select_parents(gebv, cv = NULL, n_select = NULL, trait_weights = TRAIT_WEIGHTS, trait_names = TRAIT_NAMES, trait_short = TRAIT_SHORT_NAMES, outfile = output_path("breeders_output.csv"))` — `07_select.R:46-50` | no rds cache; writes CSV (108-109) | no loops of consequence (vectorized dplyr) |
+
+Cache pattern summary: steps 2, 3, 4, 6 use the identical two-line idiom `cache &lt;- cache_path("&lt;name&gt;.rds"); if (!refresh &amp;&amp; file.exists(cache)) return(read_rds(cache))` + `write_rds(out, cache)`. **A cache hit returns silently** — there is no "using cached X" message anywhere, which is why `run_pipeline.R`'s header comment (lines 12-14) has to explain that re-sourcing "returns instantly (no bars)".
+
+---
+
+## 4. Elapsed time / ETA
+
+**Nothing in the pipeline computes or reports elapsed time or ETA.**
+
+- The only ETA rendered is whatever cli draws inside the two purrr `.progress` bars (03:60, 04:529) — free, not computed by this code.
+- `txtProgressBar(style = 3)` (em_covariance_combiner.R:85) shows percentage only, no time.
+- The only `Sys.time()`/`difftime()` in the repo are in an excluded diagnostic: `code/impute_diagnostic_robust.R:63-64`.
+- The only time-related *text* is the static hint `"large GBS files may take a while..."` at `04_find_genotyping.R:224`.
+
+---
+
+## 5. BGLR / sommer verbosity and CV progress in `06_stage2_genomic_prediction.R`
+
+BGLR (`.predict_one`, lines 68-71):
+```r
+68    fm  &lt;- BGLR::BGLR(y = y, weights = sqrt(w),
+69                      ETA = list(G = list(X = L, model = "BRR")),
+70                      nIter = nIter, burnIn = burnIn, verbose = FALSE,
+71                      saveAt = file.path(tempdir(), "bglr_GBLUP_"))
+```
+`verbose = FALSE` — BGLR's built-in per-iteration `"Iter=... Time/Iter=..."` console output (which *does* include time-per-iteration) is suppressed. `saveAt` is redirected to `tempdir()` so its trace files don't land in the repo.
+
+sommer (`.predict_one_sommer`, lines 109-117):
+```r
+109    args &lt;- list(fixed  = y ~ 1,
+110                 random = ~ sommer::vsm(sommer::ism(genotype), Gu = relmat),
+111                 rcov   = ~ units, data = dat, verbose = FALSE)
+...
+117    if ("dateWarning" %in% names(formals(sommer::mmes))) args$dateWarning &lt;- FALSE
+```
+`verbose = FALSE` suppresses sommer's REML iteration table; `dateWarning = FALSE` suppresses its license/date nag.
+
+Other verbosity flags in scope: `vcfR::read.vcfR(..., verbose = FALSE)` at `04_find_genotyping.R:145` and `:146`; `suppressMessages(lme4::lmer(...))` at `05_stage1_blues.R:46`; `build_synonym_lookup(..., verbose = TRUE)` at `synonyms.R:65` (the one place verbosity is turned *on*).
+
+Cross-validation (`cv_accuracy`, 177-202): loops folds at line 188 `preds &lt;- map_dfr(1:k, function(f) {…})` — **no `.progress`, no messages, no per-fold output**. It returns a one-row tibble `tibble(trait = trait, k = k, n = nrow(ev), accuracy = acc)` (201). The trait loop is external (callers). The only user-visible artifact of CV is the final printed table.
+
+---
+
+## 6. `run_pipeline.R` between-step output, and the Rmd
+
+### `code/run_pipeline.R` — banner + summary pattern
+`message()` for the "starting" banner, `cat()` for the "result summary":
+
+| Line | Kind | Text |
+|---|---|---|
+| 30 | conditional | `if (refresh) message("PIPELINE_REFRESH = TRUE: re-running every cached step.")` |
+| 34 | banner | `message("\n== 1. Find NY-region trials ==")` |
+| 36-37 | summary | `cat(sum(trials$role == "training"), "training +", sum(trials$role == "test"), "test trials across", n_distinct(trials$locationName), "locations\n")` |
+| 39 | banner | `message("\n== 2. Download phenotypes (progress by study) ==")` |
+| 42-44 | summary | `cat("Observations:", nrow(pheno$pheno), "| training accessions:", nrow(sets$train_acc), "| test-trial accessions:", nrow(sets$test_acc), "\n")` |
+| 46 | banner | `message("\n== 3. Genotyping coverage + combined GRM (download progress, EM bar) ==")` |
+| 49-50 | summary | `cat("Protocols combined:", paste(geno$protocol_ids, collapse = ", "), "| prediction GRM:", nrow(geno$G), "x", ncol(geno$G), "accessions\n")` |
+| 52 | banner | `message("\n== 4. Stage-1 BLUEs (training trials only) ==")` |
+| 54 | summary | `cat(nrow(blues), "BLUEs across", n_distinct(blues$studyDbId), "studies\n")` |
+| 56 | banner | `message("\n== 5. Stage-2 genomic prediction ==")` |
+| 58 | summary | `cat(nrow(gebv), "GEBVs across", n_distinct(gebv$trait), "traits\n")` |
+| 60 | banner | `message("\n== 5b. Cross-validated accuracy ==")` |
+| 62 | **print** | `print(cv)` — the only `print()` in the pipeline |
+| 65 | banner | `message("\n== 6. Breeders' output ==")` |
+| 67-68 | summary | `cat(nrow(selected$parents), "accessions; breeders' output written to ", output_path("breeders_output.csv"), "\n", sep = "")` |
+
+Notes: banner numbering (1..5, 5b, 6) does **not** match the file numbering (01..07) — step 1 (connect, line 32) gets no banner at all. There is no timing between banners, and no "step k of n". The file's header comment (lines 4-8, 12-16) documents the whole rationale: bars only draw in an interactive console, `wflow_build()` renders in a captured non-interactive callr subprocess.
+
+### `analysis/brapi_selection_pipeline.Rmd`
+
+Global chunk options (13-16) — **critical for progress planning**:
+```r
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 8, fig.height = 5)
+```
+`message = FALSE, warning = FALSE` means **every `message()` and `warning()` catalogued above is discarded in the knitted report**. Only `cat()` output, printed objects, `kable()` tables and plots survive. No chunk sets `results=`, `cache=`, or overrides these options individually — there is not a single per-chunk option in the file.
+
+Chunk-by-chunk output:
+
+| Chunk (line) | Prints |
+|---|---|
+| `setup` (13) | `include=FALSE` |
+| `source-code` (33) | sources all 7 step files + `conn &lt;- connect_t3()`; no output |
+| `trials` (46) | `cat(...)` training/test counts (48-49); `knitr::kable(caption = "Trials by role and location (nearest first)")` (53) |
+| `trials-map` (56) | ggplot map of trial locations, red x at center (57-63) — the only plot in the report |
+| `pheno` (68) | `cat("Observations:", …)` (71-73); `kable(caption = "Trait summary")` (78) |
+| `geno` (85) | `kable(head(geno$projects, 10), caption = "Genotyping PROJECTS ranked by accession coverage")` (87-88); `kable(head(geno$protocols, 10), …PROTOCOLS…)` (89-90); `cat("Protocols combined:", …)` (91); `cat("Prediction GRM:", nrow(geno$G), "x", ncol(geno$G), "accessions\n")` (92) |
+| `stage1` (99) | `cat("BLUEs:", …)` (101); `head(blues) |&gt; kable(caption = "Example Stage-1 BLUEs")` (102) |
+| `stage2` (107) | `kable(caption = "GEBV candidates per trait")` over per-trait n_candidates/n_phenotyped/n_predicted_only (109-114) |
+| `cv` (117) | `cv &lt;- map_dfr(unique(gebv$trait), ~ cv_accuracy(blues, geno, .x))` then `kable(cv, caption = "5-fold cross-validated prediction accuracy")` (118-119) — the trait × fold loop, entirely silent while running |
+| `select` (126) | `head(sel$parents, 20) |&gt; kable(...)` (128-129); `sel$traits |&gt; kable(...)` (130-131); `cat("Full breeders' output written to", output_path("breeders_output.csv"), "\n")` (132) |
+
+Also relevant: the Rmd calls `find_ny_trials(conn)`, `get_phenotypes(conn, …)`, `find_and_get_genotypes(…)`, `stage2_gblup(blues, geno)` **without `refresh=`**, so it is entirely cache-driven; and it does not save `cv` (unlike `run_pipeline.R:63`).
+
+---
+
+## 7. cli / progress / progressr in the repo
+
+**Repo usage:** none of the three is ever loaded or called by name. The complete set of hits across all `.R`/`.Rmd`/`.md` (excluding `docs/`, `.git/`, `data/`):
+
+```
+code/03_get_phenotypes.R:60:  }, .progress = "Phenotypes: downloading by study") |&gt;
+code/04_find_genotyping.R:529:        .progress = "Genotypes: downloading VCFs by protocol"),
+code/em_covariance_combiner.R:85:  pb &lt;- txtProgressBar(min = 0, max = max_iter, style = 3)
+```
+(plus `code/impute_diagnostic_robust.R:63-64` `Sys.time()`/`difftime`, which is out of scope).
+
+So cli is used only *transitively*, via purrr's `.progress` argument. `library(cli)`, `cli::`, `progress::progress_bar`, `progressr::` and `pbapply` appear **nowhere**.
+
+**README install list** (`README.md:18-23`) — none of the three is listed:
+```r
+remotes::install_github("TriticeaeToolbox/BrAPI.R")   # BrAPI wrapper
+install.packages(c("tidyverse", "here", "geosphere",  # data + geography
+                   "lme4", "BGLR", "vcfR",            # models + markers
+                   "workflowr"))
+```
+(`glmnet` and `sommer` are also missing from that list despite being used by `grm_utils.R` and `06_*.R`.) The only README mention of progress is line 160: *"Run it in an interactive console to watch the progress bars on the slow phenotype/VCF downloads and the EM combine…"*. `CLAUDE.md`, `DESIGN.md`, and `BACKGROUND.md` mention progress/verbosity **zero** times.
+
+**Installed locally** (user library `/Users/jj332/Library/R/arm64/4.5/library`): `cli` 3.6.6, `progress` 1.2.3, `progressr` 0.18.0, `purrr` 1.2.2 — all three candidate packages are already available with no new install needed (cli and progress arrive as tidyverse/vroom dependencies; progressr is present but unused, presumably from another project). Older library trees (4.3, 4.4) have `progressr` too but are missing `cli` in 4.3.
+
+---
+
+## Natural units of work, ranked by cost (for planning)
+
+1. **Step 4 → per-marker glmnet imputation** (`grm_utils.R:93`) — tens of minutes, totally silent, total known up front (`length(imputeOrder)`), nested 4 deep (protocol → file → QC → marker).
+2. **Step 6b → trait × 5 folds of BGLR/sommer** (`06:188` inside caller's trait loop) — totally silent, total trivially computable (`n_traits * k`).
+3. **Step 4 → VCF downloads** (`04:218`) — has an "i/n" message but no bar; the outer protocol bar exists.
+4. **Step 6 → per-trait MCMC** (`06:165`) + the repeated `eigen(relmat)` (`06:63`) — silent.
+5. **Step 4 → EM iterations** (`em_covariance_combiner.R:86`) — barred, but the max=100 total is an upper bound it rarely reaches.
+6. **Step 5 → trait × study lmer fits** (`05:89-105`) — silent except skip messages; total = number of `group_by` groups.
+7. **Step 3 → per-study downloads** (`03:34`) — already barred with ETA.</result>
+<usage><subagent_tokens>66911</subagent_tokens><tool_uses>29</tool_uses><duration_ms>221297</duration_ms></usage>
+</task-notification>

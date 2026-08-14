@@ -1,0 +1,12 @@
+# T3 / Triticeae Toolbox BrAPI login credentials.
+#
+# Copy this file to `.Renviron` in the repo root and fill in your real credentials.
+# `.Renviron` is gitignored -- never commit it.
+#
+# connect_t3() (code/01_connect.R) reads these. It calls readRenviron() on the
+# project .Renviron itself, so the credentials are picked up even when R was
+# started from another directory or from workflowr::wflow_build(). T3/Oat no
+# longer allows anonymous access -- without these the pipeline stops at step 1.
+
+T3_USERNAME=your_t3_username
+T3_PASSWORD=your_t3_password

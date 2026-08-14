@@ -18,6 +18,19 @@ test_that(".vcf_to_dosage can restrict to keep_samples", {
   expect_setequal(rownames(M), c("L2", "L4"))
 })
 
+test_that(".vcf_to_dosage canonicalizes synonym sample names via alias_lookup", {
+  # VCF carries the accession under a preliminary/synonym name "PRELIM_9".
+  D <- make_dosage(4, 5); rownames(D)[2] <- "PRELIM_9"
+  vcf <- write_test_vcf(tempfile(fileext = ".vcf"), D)
+  lk <- c(PRELIM_9 = "FINAL_9", FINAL_9 = "FINAL_9")   # alias -> primary
+  # keep_samples uses the PRIMARY name; without canonicalization this would miss.
+  M <- .vcf_to_dosage(vcf, keep_samples = "FINAL_9", target_density = NULL,
+                      alias_lookup = lk)
+  expect_setequal(rownames(M), "FINAL_9")              # row relabeled to primary
+  expect_equal(unname(M["FINAL_9", order(colnames(M))]),
+               unname(D["PRELIM_9", ]))                 # genotypes preserved
+})
+
 test_that("marker thinning counts and thins to ~target density", {
   D <- make_dosage(4, 100)
   vcf <- write_test_vcf(tempfile(fileext = ".vcf"), D)
@@ -55,6 +68,35 @@ test_that(".qc_markers drops minority-annotation markers before accessions", {
   expect_true(all(colnames(Q) %in% paste0("m", 1:5)))  # majority markers kept
   expect_false(any(paste0("a", 11:14) %in% rownames(Q)))# minority accessions dropped
   expect_false(anyNA(Q))                                # imputed
+})
+
+test_that(".impute_glmnet is robust (no abort) and deterministic", {
+  set.seed(3)
+  M <- make_dosage(40, 30)
+  M[5, 1] <- NA                                   # missing on a polymorphic marker
+  M[, 2] <- 2; M[1, 2] <- 0; M[7, 2] <- NA        # near-monomorphic + missing
+  M[, 3] <- 1; M[2, 3] <- NA                       # monomorphic among observed + missing
+  out1 <- .impute_glmnet(M)
+  out2 <- .impute_glmnet(M)
+  expect_false(anyNA(out1))                        # one bad column doesn't abort the rest
+  expect_equal(out1, out2)                          # fixed CV folds -> reproducible
+  expect_equal(out1[2, 3], 1)                       # monomorphic col -> the sole value
+})
+
+test_that(".protocol_grm estimates on a panel and subsets to relevant accessions", {
+  D <- make_dosage(30, 40)                          # 30 samples, no missing
+  vcf <- write_test_vcf(tempfile(fileext = ".vcf"), D)
+  relevant <- c("L1", "L2", "L3")
+  res <- .protocol_grm(vcf, keep_samples = relevant, all_samples = rownames(D),
+                       panel_min = 10)
+  expect_setequal(rownames(res$grm), relevant)      # GRM subset back to relevant
+  expect_equal(dim(res$grm), c(3, 3))
+  expect_equal(mean(diag(res$grm)), 1)              # std_grm over the relevant block
+  expect_setequal(rownames(res$dosage), relevant)
+
+  # < 2 relevant accessions in the protocol -> no partial.
+  expect_null(.protocol_grm(vcf, keep_samples = "L1", all_samples = rownames(D),
+                            panel_min = 10))
 })
 
 test_that(".read_pedigree_group reconstructs a dense symmetric matrix", {

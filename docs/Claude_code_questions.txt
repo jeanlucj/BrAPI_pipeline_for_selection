@@ -4,3 +4,9 @@
 [2026-06-19 14:17:47] what is in .gitignore for this project?
 [2026-06-19 14:23:04] If I run using ren_pipeline.R it will not create anything in docs, right?
 [2026-06-19 16:02:37] Quick question.  For the EM combine, each relmat needs a degrees of freedom.  There is a parameter for PEDIGREE_DF.  How is the number obtained for the GRMs?
+[2026-06-20 15:17:40] This is going to be a headache no matter what.  I thing the marker-key should be CHROM_POS with canonical CHROM.  At least that is biological rather than a human-given name.  Please make the fix that way.  Also, save somewhere for me a list of the accessions that were identified as in proto66 but do not have archived VCFs.  That's big chunk lost, right?
+[2026-06-20 16:27:29] I may be misunderstanding this but it sounds like you subset the marker matrices to the relevant accessions _before_ you do any imputation or calculate the GRM.  That makes sense, it's computationally efficient, but it probably also leads to unstable imputation and GRMs.  Do I have this right?
+[2026-06-20 17:58:42] I'm going to run_pipeline.  It's ready for this, yes?
+[2026-06-22 10:42:57] What was the genotyping protocol that perhaps erroneously did not get downloaded and used?
+[2026-06-22 17:02:27] Explain winsorizing briefly
+[2026-06-22 17:24:29] What is the criterion to determine if the response has zero/near-zero variance — there's no estimable genotypic signal?

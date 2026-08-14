@@ -23,28 +23,53 @@ test_that(".geno_kernel prefers G, falls back to markers, else errors", {
   expect_error(.geno_kernel(list(G = NULL, markers = NULL)), "neither")
 })
 
-test_that(".resolve_model downgrades marker-effect models without a marker matrix", {
-  expect_equal(.resolve_model("BRR", list(markers = NULL)), "RKHS")
-  expect_equal(.resolve_model("BRR", list(markers = make_dosage(2, 2))), "BRR")
-  expect_equal(.resolve_model("RKHS", list(markers = NULL)), "RKHS")
+test_that("select_parents writes the two-block breeders_output.csv (un-standardized)", {
+  tn <- c("yield", "height")                            # full "trait names"
+  gebv <- tidyr::expand_grid(genotype = c("A", "B", "C"), trait = tn) |>
+    dplyr::mutate(GEBV = c(10, 1,  6, 2,  2, 3),         # A: 10/1, B: 6/2, C: 2/3
+                  phenotyped = genotype %in% c("A", "B"))
+  weights <- setNames(c(2, -1), tn)                     # index = 2*yield - 1*height
+  shorts  <- setNames(c("Yld", "Ht"), tn)
+  cv <- tibble::tibble(trait = tn, accuracy = c(0.5, 0.3))
+
+  out <- file.path(tempdir(), "breeders.csv")
+  res <- select_parents(gebv, cv = cv, trait_weights = weights,
+                        trait_names = tn, trait_short = shorts, outfile = out)
+
+  # Index is the RAW weighted sum (no standardization); sorted descending.
+  expect_equal(res$parents$accession, c("A", "B", "C"))     # 19 > 10 > 1
+  expect_equal(res$parents$Index, c(2*10 - 1, 2*6 - 2, 2*2 - 3))
+  expect_equal(res$parents$In_Training, c(1L, 1L, 0L))       # C not phenotyped
+  expect_setequal(names(res$parents), c("accession", "In_Training", "Yld", "Ht", "Index"))
+
+  # n_select truncates to the top n by index.
+  expect_equal(nrow(select_parents(gebv, cv = cv, trait_weights = weights,
+                                   trait_names = tn, trait_short = shorts,
+                                   n_select = 2, outfile = tempfile())$parents), 2)
+
+  # CSV shape: header + spacer column + block 2.
+  raw <- readLines(out)
+  expect_equal(raw[1], "accession,In_Training,Yld,Ht,Index,,Trait,Weight,CV_accuracy")
+  expect_match(raw[2], ",,Yld,2,0.5$")                       # blank spacer, block-2 row 1
+  expect_true(file.exists(out))
 })
 
-test_that("select_parents ranks, flags redundancy, and writes a CSV", {
-  gebv <- tibble::tibble(
-    trait = "yield",
-    genotype = c("A","B","C","D"),
-    GEBV = c(3, 2.9, 1, 0),               # A and B both high
-    phenotyped = c(TRUE, TRUE, FALSE, FALSE))
-  G <- diag(4); dimnames(G) <- list(c("A","B","C","D"), c("A","B","C","D"))
-  G["A","B"] <- G["B","A"] <- 0.9         # B closely related to higher-ranked A
+test_that("select_parents with NULL weights drops the Index and Weight columns", {
+  tn <- c("yield", "height")
+  gebv <- tidyr::expand_grid(genotype = c("A", "B", "C"), trait = tn) |>
+    dplyr::mutate(GEBV = c(10, 1,  6, 2,  2, 3),
+                  phenotyped = genotype %in% c("A", "B"))
+  shorts <- setNames(c("Yld", "Ht"), tn)
+  cv <- tibble::tibble(trait = tn, accuracy = c(0.5, 0.3))
 
-  out <- file.path(tempdir(), "sel.csv")
-  res <- select_parents(gebv, geno = list(G = G), n_select = 2,
-                        relatedness_threshold = 0.5, outfile = out)
-  expect_equal(res$genotype[1], "A")                    # ranked by index
-  expect_true(all(res$rank == seq_len(nrow(res))))
-  expect_equal(sum(res$selected), 2)
-  expect_equal(res$redundant_with[res$genotype == "B"], "A")
-  expect_true(is.na(res$redundant_with[res$genotype == "A"]))
-  expect_true(file.exists(out))
+  out <- file.path(tempdir(), "breeders_noweights.csv")
+  res <- select_parents(gebv, cv = cv, trait_weights = NULL,
+                        trait_names = tn, trait_short = shorts, outfile = out)
+
+  # No selection index: Index column gone, rows ordered by accession, GEBVs present.
+  expect_setequal(names(res$parents), c("accession", "In_Training", "Yld", "Ht"))
+  expect_equal(res$parents$accession, c("A", "B", "C"))      # sorted by accession
+  expect_false("Weight" %in% names(res$traits))              # block 2 drops Weight
+  expect_equal(readLines(out)[1],
+               "accession,In_Training,Yld,Ht,,Trait,CV_accuracy")
 })

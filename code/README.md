@@ -9,16 +9,18 @@ report is `analysis/brapi_selection_pipeline.Rmd`.
 
 | File | Function | Does |
 |------|----------|------|
-| `config.R` | (parameters) | Center point/radius, years, traits, protocol, BGLR & QC settings |
-| `01_connect.R` | `connect_t3()` | Connect to T3/Oat (anonymous; optional login) |
+| `progress.R` | `say()`, `note()`, `note_cache()`, `step_start()`/`step_done()`, `pb_start()`/`pb_tick()`/`pb_done()`, `pb_wrap()`, `time_it()`, `print_timings()` | Console status lines, cli progress bars and per-step timings. Sourced by `config.R`, so available in every step; gated by `SHOW_PROGRESS` (default `interactive()`), overridable with `options(brapi.progress = )` |
+| `config.R` | (parameters), `config_lines()`, `config_traits()` | Center point/radius, years, traits, protocol, BGLR & QC settings. The long selection lists (trials, test accessions, traits + optional tab-separated weights/short names) are read from `data/config/*.txt` |
+| `01_connect.R` | `connect_t3()`, `t3_login()` | Connect to T3/Oat and log in (`T3_USERNAME`/`T3_PASSWORD` from `.Renviron`); fails fast on missing or rejected credentials |
 | `02_find_trials.R` | `find_ny_trials()` | Training trials (radius or `TRAINING_TRIALS`) + `TEST_TRIALS`, tagged by `role` |
 | `03_get_phenotypes.R` | `get_phenotypes()`, `split_by_role()` | Observations + field design per study; split into training phenotypes / training & test accessions |
 | `04_find_genotyping.R` | `find_and_get_genotypes()` | Rank covering protocols/projects (train+test), download/thin VCFs, EM-combine per-protocol GRMs (+ pedigree), subset to prediction targets (inject ungenotyped training) |
 | `em_covariance_combiner.R` | `EMCovarianceCombiner()` | Wishart-EM combiner (copied from T3Predictathon2026) |
-| `grm_utils.R` | `.Gmatrix()`, `std_grm()`, `.effective_n()` | VanRaden GRM, standardization, and Galwey effective-sample-size (for EM df), shared by steps 4 & 6 |
+| `synonyms.R` | `build_alias_lookup()`, `canonicalize_to_primary()` | Cached alias→primary synonym map (wraps `T3_brapi_helpers`) so VCF samples carried under a synonym still match (`USE_SYNONYMS`) |
+| `grm_utils.R` | `.Gmatrix()`, `std_grm()`, `.effective_n()`, `.impute_glmnet()`, `.mean_impute()` | VanRaden GRM, standardization, Galwey effective-sample-size (for EM df), and missing-marker imputation (robust per-marker elastic-net, or column mean), shared by steps 4 & 6 |
 | `05_stage1_blues.R` | `stage1_blues()` | Per-trial BLUEs (lme4) with weights |
-| `06_stage2_genomic_prediction.R` | `stage2_gblup()`, `cv_accuracy()` | BGLR genomic prediction (RKHS on the combined GRM) → GEBVs |
-| `07_select.R` | `select_parents()` | Selection index, relatedness flag, ranked CSV |
+| `06_stage2_genomic_prediction.R` | `stage2_gblup()`, `cv_accuracy()` | Genomic prediction (RKHS on the combined GRM) → GEBVs; `engine = "bglr"` (Bayesian, default) or `"sommer"` (REML GBLUP, cross-check) |
+| `07_select.R` | `select_parents()` | Un-standardized weighted selection index → two-block `breeders_output.csv` (per-accession GEBVs+index; per-trait weight+CV accuracy) |
 | `run_pipeline.R` | (script) | Interactive driver: sources + runs steps 1–7 in order so the download/EM progress bars are visible (set `PIPELINE_REFRESH <- TRUE` to force fresh runs) |
 
 Each data-pulling/compute step caches its result under `data/` (e.g.
@@ -48,6 +50,13 @@ install.packages(c("tidyverse", "here", "geosphere",  # data + geo
   especially diversity panels — can be **multiple GB**; large files are thinned
   genome-wide to ~`TARGET_DENSITY` (10000) markers before reading, and any file
   that still fails to download is skipped with a warning.
+- **Synonym canonicalization** (`USE_SYNONYMS`, `synonyms.R`): an accession may be
+  genotyped under a *preliminary* line name later demoted to a synonym, so a VCF can
+  carry it under a name ≠ our `germplasmName`. Step 4 builds a cached alias→primary
+  lookup (`T3_brapi_helpers`) and relabels VCF samples to the primary before
+  matching. (Empirically near-zero gain for the current T3/Oat targets — most
+  disconnected accessions are simply absent from the archived VCFs — but it is the
+  correct guard and is shared with the T3Predictathon project.)
 - **Multi-platform combine**: `GENO_PROTOCOL_ID = NULL` builds one standardized
   GRM per covering protocol and **EM-combines** them into a single GRM
   (`em_covariance_combiner.R`), using accessions genotyped on ≥2 partials
@@ -59,6 +68,14 @@ install.packages(c("tidyverse", "here", "geosphere",  # data + geo
   id (e.g. an **Oat 3K** array) for a faster single-platform run that also yields a
   raw marker matrix (so marker-effect BGLR models stay available). Downloaded VCFs
   are cached under `data/vcf_cache/`.
+- **Per-protocol panel estimation**: each protocol's imputation and VanRaden GRM
+  are estimated on a *panel* — all of our relevant accessions (targets + bridges)
+  present in the protocol, **plus non-relevant accessions** from the same protocol
+  up to `max(GRM_PANEL_MIN, n_relevant)` — then the GRM is subset back to the
+  relevant accessions. Estimating allele frequencies / imputation / the GRM on only
+  our handful of accessions makes the diagonals an artifact of who shares the panel
+  (see `code/impute_diagnostic*.R`). Missing calls are filled by `GRM_IMPUTE`
+  (`"glmnet"` = robust per-marker elastic-net, default; `"mean"` = column mean).
 - **Prediction targets / subsetting**: protocol coverage is driven by the **training
   + test** accessions (`find_and_get_genotypes(train_acc, test_acc, test_names)`;
   `TEST_ACCESSIONS` dbIds resolved via the germplasm cache). After the combine the GRM

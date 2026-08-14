@@ -43,8 +43,11 @@ Linear, single-responsibility steps in `code/`, each consuming the previous step
 object and caching under `data/`:
 
 ```
-config.R          parameters sourced by every step
-01_connect        conn     T3/Oat BrAPI connection (anonymous; login fallback)
+config.R          parameters sourced by every step; the long selection lists
+                  (TRAINING_TRIALS, TEST_TRIALS, TEST_ACCESSIONS, TRAIT_NAMES +
+                  weights/short names) come from data/config/*.txt
+01_connect        conn     T3/Oat BrAPI connection (REQUIRES login; T3_USERNAME /
+                           T3_PASSWORD from a gitignored .Renviron)
 02_find_trials    trials   radius OR explicit TRAINING_TRIALS, + TEST_TRIALS, tagged by `role`
 03_get_phenotypes pheno    /observationunits -> long phenotypes + field design + accessions; split_by_role()
 04_find_genotyping geno    coverage(train+test) -> per-protocol GRMs -> EM-combined GRM (+pedigree), SUBSET to targets
@@ -53,16 +56,50 @@ config.R          parameters sourced by every step
 07_select         parents  selection index + relatedness flag -> output/selected_parents.csv
 ```
 
-Shared: `grm_utils.R` (`.Gmatrix`, `std_grm`) and `em_covariance_combiner.R`
-(`EMCovarianceCombiner`, copied verbatim from `../T3Predictathon2026`).
+Shared: `grm_utils.R` (`.Gmatrix`, `std_grm`), `em_covariance_combiner.R`
+(`EMCovarianceCombiner`, copied verbatim from `../T3Predictathon2026`), and
+`progress.R` (console reporting).
 
 Things that require reading several files to grasp:
+- **All console reporting goes through `code/progress.R`** (`say`/`note`/`note_cache`
+  for status, `step_start`/`step_done`/`print_timings` for per-step banners+timing,
+  `pb_start`/`pb_tick`/`pb_done` and `pb_wrap` for bars), sourced via `config.R` and
+  gated by `SHOW_PROGRESS` (default `interactive()`; `options(brapi.progress=)`
+  overrides). So: bars are instrumented where the time actually goes (per study, per
+  VCF, per imputed marker, per trait×study fit, per trait, per CV fold), cached steps
+  announce themselves instead of returning silently, and everything is silent in
+  batch/tests/`wflow_build()`. Two cli facts the wrappers exist to handle: a bar dies
+  when the frame that created it returns (hence `.envir = parent.frame()` in
+  `pb_start`), and cli shows only the innermost bar, so nested bars' labels must carry
+  their outer context. `em_covariance_combiner.R` keeps its own `txtProgressBar` and is
+  timed from the caller (`time_it`) rather than edited — it must stay verbatim.
+- **Run inputs live outside the tracked source.** Credentials in `.Renviron`
+  (gitignored; `.Renviron.example` is the tracked template) and the selection lists in
+  `data/config/*.txt` — the one subfolder of `data/` that is *not* gitignored. Both are
+  read by code, not by R startup: `connect_t3()` calls `readRenviron(here::here(".Renviron"))`
+  itself (R only auto-reads `.Renviron` from its startup dir, so `wflow_build()` and
+  `Rscript` from `analysis/` would otherwise see no credentials), and `config.R`'s
+  `config_lines()` / `config_traits()` read the lists (one value per line; the trait
+  file takes optional tab-separated weight and short-name columns, all-or-none per
+  column; a missing file is an error, not an empty list).
 - **Two keying spaces.** Genotyping *coverage* is keyed by `germplasmDbId`;
   everything marker-/relationship-/BLUE-side is keyed by `germplasmName`. Step 04
   holds the dbid↔name map that bridges them — preserve this when editing 03/04/06.
   Pedigree group CSVs are keyed by `germplasmDbId`, so step 04 widens that map with
   the pedigree `germplasm_cache_<id>.rds` to name *non-phenotyped* pedigree
   accessions (needed for pedigree-bridge detection).
+- **VCF samples are matched by name, via a synonym map.** Coverage is resolved
+  server-side by dbId, but VCF sample IDs are strings, and an accession can be
+  genotyped under a *preliminary* line name later demoted to a SYNONYM — so a plain
+  `germplasmName` match silently drops it. `code/synonyms.R` (`USE_SYNONYMS`) builds
+  a cached alias→primary lookup (`T3_brapi_helpers::build_synonym_lookup` over
+  `/search/germplasm`, sourced from the sibling repo when the package isn't
+  installed) and `.vcf_to_dosage` canonicalizes every VCF sample name to the primary
+  before matching/labeling. Keep this when editing the VCF→dosage path; the rest of
+  the pipeline keys on primaries. NB: for the current T3/Oat targets this recovered
+  ~0 extra matches — most disconnected accessions are genuinely absent from the
+  archived VCFs (incl. the Oat 3K array, whose server "coverage" count far exceeds
+  what the archived VCF actually contains), not hidden under a synonym.
 - **Prediction targets drive `G`'s size.** `find_and_get_genotypes(train_acc,
   test_acc, test_names)` builds the full EM-combined GRM (with bridges/pedigree) then
   **subsets it to training ∪ predictable-test** — bridges only inform the combine.
@@ -70,10 +107,16 @@ Things that require reading several files to grasp:
   (diag = mean diag, off-diag 0). Test accessions absent from the GRM are silently
   dropped. Stage 1 trains on `split_by_role()`'s `train_pheno` only (test-trial
   phenotypes held out; a trial in both lists counts as training).
-- **`geno` shape drives Stage 2.** `find_and_get_genotypes()` returns a combined GRM
-  `G` always, but a raw `markers` matrix **only** for the single-protocol, no-pedigree,
-  no-injection case. `stage2_gblup()` uses RKHS on `G` by default and auto-downgrades
-  marker-effect models (BRR/BayesB) to RKHS when `markers` is NULL.
+- **Stage 2 is always kernel GBLUP.** `find_and_get_genotypes()` returns a combined
+  GRM `G` always (plus a raw `markers` matrix only for the single-protocol,
+  no-pedigree, no-injection case, used solely to build a kernel when `G` is absent).
+  `stage2_gblup()` predicts on the relationship kernel via `MIXED_MODEL_ENGINE`
+  (`"bglr"` or `"sommer"` REML GBLUP) — no marker-effect (BRR/BayesB-on-markers)
+  path. sommer GEBVs cache to `gebv_sommer.rds`, BGLR to `gebv.rds`. **The "bglr"
+  engine fits kernel GBLUP as ridge (BRR) on the relationship eigen-factor, NOT
+  `model="RKHS"`: RKHS mishandles the 1/SE² weights and inflates GEBVs ~λ-fold —
+  unweighted RKHS is fine, weighted is not (see `code/bglr_rkhs_vs_brr.R`). BGLR's
+  `weights` are inverse-SDs (Var∝1/weights²), so pass `sqrt(1/SE²)`.**
 - **`GENO_PROTOCOL_ID = NULL`** means "combine ALL covering protocols via the
   Wishart-EM combiner" (bridges = accessions in ≥2 partials, counting each platform
   AND each pedigree group, so a single-platform accession that also sits in a
@@ -91,6 +134,12 @@ Things that require reading several files to grasp:
 
 ## Live-server gotchas (don't rediscover these)
 
+- **Anonymous access is gone**; every run must log in. An unauthenticated call returns
+  an *empty* result, not a 401, so a missing login looks like missing data. Two BrAPI
+  `login()` traps `t3_login()` (`01_connect.R`) handles: with empty args it *prompts*
+  (`readline`/`askpass`) and would hang `wflow_build()`; on a *wrong* password it only
+  warns and returns normally, leaving `conn$auth_token` NULL — so check the token, not
+  the return value.
 - T3/Oat does **not** implement BrAPI genotyping endpoints; markers come from
   Breedbase VCF downloads. Prefer **archived** VCFs (`conn$vcf_archived`); on-the-fly
   `conn$vcf` stalls.
@@ -98,13 +147,33 @@ Things that require reading several files to grasp:
   client-side.
 - GBS VCFs are large (hundreds of MB to multi-GB); large files are thinned to
   `TARGET_DENSITY` markers and undownloadable ones are skipped with a warning.
-- QC drops high-missing **markers before accessions** (projects can mix genome
-  annotations, leaving every accession ~50% missing otherwise).
+- Markers are keyed by **canonical CHROM_POS** (leading `chr` stripped), not the VCF
+  `ID` column — T3 projects key inconsistently (SNP names vs `.`), which made identical
+  markers look distinct and broke the multi-project merge. (`.vcf_to_dosage`.)
+- QC drops high-missing **markers before accessions** (a protocol's projects can still
+  mix genuinely different panels, leaving accessions ~50% missing otherwise).
+- Each protocol's imputation + VanRaden GRM are estimated on a **panel** (its relevant
+  accessions + non-relevant fillers up to `max(GRM_PANEL_MIN, n_relevant)`), then the
+  GRM is subset back to the relevant accessions. Allele frequencies / imputation /
+  diagonals estimated on only the few relevant accessions are unstable — diagonals
+  become an artifact of who shares the panel (`.protocol_grm`; see
+  `code/impute_diagnostic*.R`, BACKGROUND.md). Missing calls filled per `GRM_IMPUTE`
+  (`.impute_glmnet` robust elastic-net default, or `.mean_impute`); `.impute_glmnet`
+  retries each marker independently and fixes its CV folds, so one bad column can't
+  abort it and the result is reproducible.
 
 ## Cross-repo dependencies
 
+- `../T3_brapi_helpers/` — shared BrAPI helper package (also used by
+  `T3Predictathon2026`). `code/synonyms.R` uses its `build_synonym_lookup` /
+  `canonicalize_to_primary` / `get_synonyms_from_germplasm_names` for synonym
+  canonicalization; it prefers the installed package but sources
+  `../T3_brapi_helpers/R/brapi_germplasm.R` directly when the package isn't
+  installed (an installed copy can lag the sibling repo). Degrades to exact-name
+  matching if neither is present.
 - `../T3Predictathon2026/scripts/Analysis_Claude/` — source of the EM combiner and
-  the VCF-thinning approach.
+  the VCF-thinning approach (and `build_synonym_map.R`, the original of the synonym
+  functions now generalized into `T3_brapi_helpers`).
 - `../BrAPI_pedigree_relmat/output/<id>/` — precomputed pedigree relationship
   matrices read via `PEDIGREE_DIR`; step 04 also reads its companion
   `<id>_pedigree_groups.rds` (cheap per-group membership) and the sibling

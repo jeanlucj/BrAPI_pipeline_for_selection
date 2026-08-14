@@ -6,6 +6,12 @@ skip_if_no_live <- function() {
   if (!nzchar(Sys.getenv("RUN_LIVE_TESTS"))) {
     skip("live tests disabled (set RUN_LIVE_TESTS=true to enable)")
   }
+  # T3/Oat requires a login, so without credentials these would all error rather
+  # than test anything. Skip cleanly instead.
+  .load_project_renviron()
+  if (!nzchar(Sys.getenv("T3_USERNAME")) || !nzchar(Sys.getenv("T3_PASSWORD"))) {
+    skip("live tests need T3_USERNAME / T3_PASSWORD (see .Renviron.example)")
+  }
 }
 
 test_that("connect_t3 returns a usable connection", {
@@ -28,7 +34,7 @@ test_that("get_phenotypes pulls observations + design for a real study", {
   conn <- connect_t3()
   trials <- find_ny_trials(conn, refresh = TRUE)
   ph <- get_phenotypes(conn, head(trials$studyDbId, 3),
-                       trait_patterns = c("yield"), refresh = TRUE)
+                       trait_names = character(0), refresh = TRUE)
   expect_true(nrow(ph$pheno) > 0)
   expect_true(all(c("germplasmDbId","germplasmName") %in% names(ph$accessions)))
 })
@@ -38,7 +44,7 @@ test_that("find_and_get_genotypes builds a GRM from a single small protocol", {
   conn <- connect_t3()
   trials <- find_ny_trials(conn, refresh = TRUE)
   ph <- get_phenotypes(conn, head(trials$studyDbId, 6),
-                       trait_patterns = c("yield"), refresh = TRUE)
+                       trait_names = character(0), refresh = TRUE)
   geno <- find_and_get_genotypes(conn, ph$accessions,
                                  protocol_id = "66",      # Oat 3K array (small)
                                  pedigree_dir = NULL, refresh = TRUE)

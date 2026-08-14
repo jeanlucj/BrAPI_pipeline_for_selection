@@ -10,10 +10,16 @@ analysis/*html
 analysis/*_cache
 analysis/site_libs
 
+# T3 credentials. The .example template is tracked; the real file never is.
+.Renviron
+!.Renviron.example
+
 # Per-step caches and results (can be large, e.g. data/vcf_cache/); keep the
-# directory placeholders so the layout stays in the repo.
+# directory placeholders so the layout stays in the repo. data/config/ is the one
+# exception: the selection lists that define a run are versioned with it.
 data/*
 !data/README.md
+!data/config/
 output/*
 !output/README.md
 
