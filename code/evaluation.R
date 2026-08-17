@@ -45,7 +45,7 @@ EVAL_GROUPS <- list(
 
   # --- online (needs a live, logged-in connection) ---------------------------
   connect    = c("connect_t3", "t3_login", ".load_project_renviron"),
-  trials     = c("find_ny_trials", "get_locations", "get_studies"),
+  trials     = c("find_ny_trials", "get_locations", "get_studies", "cache_key"),
   phenotypes = c("get_phenotypes", "split_by_role", ".level_code"),
   coverage   = c(".safe_coverage", ".coverage_table", "build_alias_lookup",
                  "canonicalize_to_primary", ".synonyms_available"),

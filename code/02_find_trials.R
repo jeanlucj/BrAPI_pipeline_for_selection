@@ -21,7 +21,7 @@ source(here::here("code", "01_connect.R"))
 #' Pull all locations as a tidy tibble with longitude / latitude extracted from
 #' the GeoJSON `coordinates` (geometry$coordinates = c(lon, lat, alt)).
 get_locations <- function(conn) {
-  say("Fetching locations (all pages) ...")
+  say("Fetching locations (all pages; metadata for every study) ...")
   resp <- conn$get("/locations", page = "all", pageSize = 1000)
   dat  <- resp$combined_data %||% resp$data
   map_dfr(dat, function(l) {
@@ -83,6 +83,21 @@ find_ny_trials <- function(conn,
   hit <- cache_read(cache, key, refresh)
   if (!is.null(hit)) return(hit)
 
+  # Say which mode is running before fetching anything. Both modes pull locations
+  # and studies, so without this the console reads like a radius search even when an
+  # explicit list is in force -- locations are joined for METADATA (locationName,
+  # distance_km, the report's map), and filter nothing when training_trials is set.
+  if (is.null(training_trials)) {
+    say("Trial selection: radius search -- within ", radius_km, " km of (",
+        center_lat, ", ", center_lon, "), seasons ", min(years), "-", max(years),
+        ", ", length(study_types), " study type(s)")
+  } else {
+    say("Trial selection: ", length(training_trials), " named TRAINING_TRIALS ",
+        "-- the radius / season / study-type search is bypassed")
+    note("locations are still fetched, for metadata only (locationName, distance_km); ",
+         "they do not filter an explicit trial list")
+  }
+
   # Location metadata, with great-circle distance from the center point.
   locs <- get_locations(conn) |>
     filter(!is.na(latitude), !is.na(longitude)) |>
@@ -105,6 +120,8 @@ find_ny_trials <- function(conn,
       warning("TRAINING_TRIALS not found on the server: ",
               paste(missing, collapse = ", "))
     }
+    note("matched ", nrow(train), " of ", length(training_trials),
+         " named training trial(s)")
   } else {
     # Geographic search: trials of any allowable type within the radius / years.
     train <- studies |>

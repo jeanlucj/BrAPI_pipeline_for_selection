@@ -35,7 +35,7 @@ Bootstrap once (see `EVALUATION.md` §3), then:
   candidate set changes. All-zero sommer output ⇒ check σ²_g before suspecting the code.
 - [ ] **L8 `select`** — `TRAIT_WEIGHTS = NULL` ⇒ no `Index` column; the index is over
   **un-standardized** GEBVs, so the weights carry the unit conversion.
-- [ ] **Test suite** — `Rscript tests/run_tests.R` → `FAIL 0`, `SKIP 4`, `PASS 287`.
+- [ ] **Test suite** — `Rscript tests/run_tests.R` → `FAIL 0`, `SKIP 4`, `PASS 291`.
 
 ## Online — cached first, cheapest server work first
 

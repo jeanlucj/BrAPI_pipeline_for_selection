@@ -33,6 +33,25 @@ test_that("TRAINING_TRIALS mode selects exactly those trials regardless of type/
   expect_true(all(out$role == "training"))
 })
 
+test_that("TRAINING_TRIALS keeps a trial far outside the radius, and one with no coordinates", {
+  # The radius/season/type search is bypassed ENTIRELY by an explicit list -- the
+  # location join only attaches metadata. `distance_km` is therefore informational
+  # here and may exceed radius_km or be NA; it is not a filter.
+  locs <- list(loc_rec("1", "Ithaca",   -76.50, 42.44),
+               loc_rec("2", "FarAway", -100.00, 35.00),   # ~2200 km, 4x the radius
+               loc_rec("3", "NoCoords",      NA,    NA))
+  studies <- list(study_rec("s1", "Far_pheno_2018", "phenotyping_trial", "2", 2018),
+                  study_rec("s2", "NoCoord_trial",  "phenotyping_trial", "3", 2024))
+  conn <- fake_conn(locations = locs, studies = studies)
+
+  out <- find_ny_trials(conn, refresh = TRUE, radius_km = 500,
+                        training_trials = c("Far_pheno_2018", "NoCoord_trial"))
+  expect_setequal(out$studyName, c("Far_pheno_2018", "NoCoord_trial"))
+  expect_gt(out$distance_km[out$studyName == "Far_pheno_2018"], 500)   # kept anyway
+  expect_true(is.na(out$distance_km[out$studyName == "NoCoord_trial"]))
+  expect_true(all(out$role == "training"))
+})
+
 test_that("STUDY_TYPES admits multiple types together", {
   out <- find_ny_trials(make_trials_conn(), refresh = TRUE, training_trials = NULL,
                         study_types = c("phenotyping_trial", "genotyping"))

@@ -112,7 +112,10 @@ commented alternatives.
 - **Explicit (default):** `TRAINING_TRIALS <- config_lines("<file>.txt")` (or an
   inline `c("Trial_A", "Trial_B", ...)`); exactly those trials train the model
   (type/year/radius ignored). Names not found on the server are reported with a
-  warning.
+  warning. Locations are still fetched and a `distance_km` column is still attached —
+  that is **metadata for the report's map, not a filter**, so a named trial thousands
+  of km from the center point, or with no coordinates at all, is still used. Step 2
+  states which mode it is in on the console.
 
 ### Choosing who to predict
 By default the pipeline predicts only the `TRAINING_TRIALS` accessions. Widen the set

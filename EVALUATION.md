@@ -481,9 +481,17 @@ dplyr::filter(trials, is.na(distance_km))  # explicit trials with no coordinates
 - **→ returns** one row per study with `studyDbId, studyName, studyType, locationDbId,
   year, distance_km, role`. With `TRAINING_TRIALS` set from `data/config/`, expect
   exactly those 9 names tagged `training`.
-- **🔍 eyeball** every configured trial name appears. A name not found on the server is a
-  **warning**, not an error — read the console, because the run continues with fewer
-  training trials than you asked for.
+- **🔍 eyeball** the first line names the **mode**: `Trial selection: 9 named
+  TRAINING_TRIALS -- the radius / season / study-type search is bypassed`, or
+  `Trial selection: radius search -- within 500 km of (...)`. Then every configured trial
+  name should appear. A name not found on the server is a **warning**, not an error —
+  read the console, because the run continues with fewer training trials than you asked for.
+- **🔍 eyeball — not a red flag.** Both modes fetch `/locations` and compute
+  `distance_km`, so in explicit mode you will still see `Fetching locations …` and a
+  `distance_km` column whose values may exceed `RADIUS_KM` or be `NA`. That join supplies
+  **metadata only** (`locationName`, the report's map); it filters nothing. Confirm with
+  `dplyr::filter(trials, distance_km > RADIUS_KM)` — rows there are correct in explicit
+  mode and impossible in radius mode.
 - **🔍 eyeball** the cache line. Either `using cached data/ny_trials.rds …` — in which
   case it was built for **this** request — or a `built for a different request —
   rebuilding` message naming what changed. Both are informative; silence would not be.
@@ -709,7 +717,7 @@ RUN_LIVE_TESTS=true Rscript tests/run_tests.R   # also tier 3 (needs .Renviron c
 
 | Command | Expected |
 |----|----|
-| `tests/run_tests.R` | `FAIL 0`, `WARN 0`, `SKIP 4`, `PASS 287` — the 4 skips are the live tier |
+| `tests/run_tests.R` | `FAIL 0`, `WARN 0`, `SKIP 4`, `PASS 291` — the 4 skips are the live tier |
 | with `RUN_LIVE_TESTS=true` and credentials | the same, with the 4 live tests running instead of skipping |
 | with `RUN_LIVE_TESTS=true` and **no** credentials | still 4 skips, not 4 errors |
 
