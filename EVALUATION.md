@@ -615,6 +615,11 @@ length(setdiff(TEST_ACCESSIONS, rownames(geno$G)))        # silently dropped tes
 - **→ returns** `geno$G` subset to the **prediction targets** (training ∪ predictable
   test), plus `protocols`, `projects`, `protocol_ids`, and `markers` only in the
   single-protocol / no-pedigree / no-injection case.
+- **🔍 eyeball** the **phase breakdown** step 4 prints when it finishes (downloads /
+  parse + thin / QC + impute / VanRaden GRM / pedigree partials / EM combine), with
+  cached phases marked. That is what tells you where a long run went — and on a second
+  cold-ish run everything except the EM combine should say `(cached)`. If a phase you
+  expected to be cached is not, read the `built for a different request` line above it.
 - **🔍 eyeball** `peek(geno$G)` — square, symmetric, and it names any row whose
   off-diagonals are **exactly 0**: those are **injected** training accessions with no
   genotype and no pedigree (diagonal = mean diagonal). They are predicted, but from
@@ -671,7 +676,10 @@ source(here::here("code", "run_pipeline.R"))
 | `data/phenotypes.rds` | step 03 | seconds from the per-study files | the study set, `TRAIT_NAMES` |
 | `data/synonym_map.rds` | `synonyms.R` | one `/search/germplasm` call | the accession name set, `USE_SYNONYMS` |
 | `data/vcf_cache/*.vcf` | step 04 | minutes to **hours** (GB-scale GBS files) | nothing — keyed by protocol/project, reused forever |
-| `data/genotypes.rds` | step 04 | minutes (cached VCFs) to hours (cold) | the accessions, `GENO_PROTOCOL_ID`, `PEDIGREE_DIR`, EM df, marker QC/impute, `SEED` |
+| `data/partials/proto<id>.rds` | step 04 | **minutes per protocol** (parse + thin + QC + glmnet impute + GRM) | that protocol's VCF set, the accessions **it carries**, QC/impute settings, `SEED` |
+| `data/partials/pedigree.rds` | step 04 | minutes (densifies ~1 GB group CSVs) | the group files, the pedigree accessions in play |
+| `data/combined_G.rds` | step 04 | the EM combine (**~5.5 min** at n≈3 000) | a hash of every partial + the three EM df settings |
+| `data/genotypes.rds` | step 04 | seconds once the above are warm | the accessions, `GENO_PROTOCOL_ID`, `PEDIGREE_DIR`, EM df, marker QC/impute, `SEED` |
 | `data/gebv.rds` / `gebv_sommer.rds` | step 06 | minutes per trait | validated by **content**: `G`'s candidate set + the requested traits |
 
 Each step records its request in a sidecar `data/<name>.key.rds` and rebuilds when it
@@ -717,7 +725,7 @@ RUN_LIVE_TESTS=true Rscript tests/run_tests.R   # also tier 3 (needs .Renviron c
 
 | Command | Expected |
 |----|----|
-| `tests/run_tests.R` | `FAIL 0`, `WARN 0`, `SKIP 4`, `PASS 291` — the 4 skips are the live tier |
+| `tests/run_tests.R` | `FAIL 0`, `WARN 0`, `SKIP 4`, `PASS 310` — the 4 skips are the live tier |
 | with `RUN_LIVE_TESTS=true` and credentials | the same, with the 4 live tests running instead of skipping |
 | with `RUN_LIVE_TESTS=true` and **no** credentials | still 4 skips, not 4 errors |
 

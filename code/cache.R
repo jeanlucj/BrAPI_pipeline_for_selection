@@ -56,10 +56,15 @@ cache_key_file <- function(path) paste0(tools::file_path_sans_ext(path), ".key.r
   diffs[!is.na(diffs)]
 }
 
-.key_show <- function(v) {
+.key_show <- function(v, n = 6) {
   if (is.null(v)) return("unset")
-  if (length(v) > 1) return(sprintf("%d values", length(v)))
-  as.character(v)
+  if (length(v) == 1) return(as.character(v))
+  # Show short vectors in full: "df: 60 60 30 -> 120 120 30" tells you what changed;
+  # "2 values -> 2 values" does not.
+  if (length(v) <= n && (is.numeric(v) || is.logical(v))) {
+    return(paste(format(v, trim = TRUE), collapse = " "))
+  }
+  sprintf("%d values", length(v))
 }
 
 .key_examples <- function(sign, v, n = 3) {

@@ -31,6 +31,15 @@ test_that("reporting off: helpers pass values through unchanged", {
   })
 })
 
+test_that("a step with no summary text still prints", {
+  # paste0() of nothing is character(0); reaching nzchar() with that errors. Only
+  # bites when reporting is ON, which is why it must be tested with it on.
+  on_prog({
+    expect_no_error({ h <- step_start("Bare step"); step_done(h) })
+    expect_no_error({ h <- step_start("Summarised"); step_done(h, "42 things") })
+  })
+})
+
 test_that("pb_start declines a bar for a degenerate total", {
   on_prog({
     expect_null(pb_start(0, "nothing"))

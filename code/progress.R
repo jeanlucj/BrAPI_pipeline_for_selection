@@ -108,9 +108,12 @@ step_done <- function(h, ..., cached = FALSE) {
   .prog_env$timings <- c(.prog_env$timings,
                          list(tibble(step = h$title, seconds = secs, cached = cached)))
   if (.prog_on()) {
+    # paste0() with no arguments is character(0), not "" -- so a step_done(h) with no
+    # summary must not reach nzchar() unguarded (it would yield logical(0) and error).
     summary <- .txt(...)
+    has_summary <- length(summary) == 1L && nzchar(summary)
     txt <- sprintf("%s (%s)%s", h$title, .fmt_dur(secs),
-                   if (nzchar(summary)) paste0(" -- ", summary) else "")
+                   if (has_summary) paste0(" -- ", summary) else "")
     cli::cli_alert_success("{txt}")
   }
   invisible(secs)
@@ -180,6 +183,67 @@ pb_wrap <- function(name) {
                        " {cli::pb_current}/{cli::pb_total} {cli::pb_bar} ",
                        "{cli::pb_percent} | ETA {cli::pb_eta}"),
        clear = FALSE)
+}
+
+# --- phases: a timing breakdown WITHIN one step -------------------------------
+# step_start/step_done time the seven pipeline steps; these time the phases inside
+# one of them (step 4 spans downloads, marker parsing, imputation, per-protocol
+# GRMs, the pedigree stitch and the EM combine, and "42 minutes" says nothing about
+# which of those to attack).
+
+.prog_env$phases <- list()
+
+phases_reset <- function() {
+  .prog_env$phases <- list()
+  invisible(NULL)
+}
+
+#' Run `expr`, recording how long it took under `label`.
+#'
+#' Repeated labels accumulate, so a phase inside a per-protocol loop can be wrapped
+#' at each iteration and still report one total. `cached = TRUE` marks the phase as
+#' having been served from a cache rather than computed.
+#' @return `expr`'s value, unchanged.
+with_phase <- function(label, expr, cached = FALSE) {
+  t0  <- Sys.time()
+  res <- expr
+  secs <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
+  prev <- .prog_env$phases[[label]]
+  .prog_env$phases[[label]] <- list(
+    seconds = (prev$seconds %||% 0) + secs,
+    # a phase counts as cached only if EVERY contribution to it was
+    cached  = (prev$cached %||% TRUE) && isTRUE(cached))
+  res
+}
+
+#' Record phases that were skipped because a cache supplied their result, so they
+#' still appear in the breakdown (marked cached) rather than vanishing from it.
+phase_cached <- function(labels) {
+  walk(labels, ~ with_phase(.x, NULL, cached = TRUE))
+  invisible(NULL)
+}
+
+#' The phase breakdown recorded since the last phases_reset().
+pipeline_phases <- function() {
+  if (!length(.prog_env$phases)) {
+    return(tibble(phase = character(), seconds = double(), cached = logical()))
+  }
+  tibble(phase   = names(.prog_env$phases),
+         seconds = map_dbl(.prog_env$phases, "seconds"),
+         cached  = map_lgl(.prog_env$phases, "cached"))
+}
+
+#' Print the phase breakdown, indented to sit under a step's own line.
+print_phases <- function(phases = pipeline_phases()) {
+  if (!.prog_on() || !nrow(phases)) return(invisible(phases))
+  width <- max(nchar(phases$phase))
+  pwalk(phases, function(phase, seconds, cached) {
+    cli::cli_verbatim(sprintf("    %s %s %10s%s", phase,
+                              strrep(".", width - nchar(phase) + 1),
+                              .fmt_dur(seconds),
+                              if (isTRUE(cached)) "  (cached)" else ""))
+  })
+  invisible(phases)
 }
 
 #' Time a single long call that has no loop to hang a bar on, e.g. the EM combine

@@ -231,11 +231,33 @@ delete caches by hand**. A cache with no recorded request (built before this exi
 or by hand) counts as stale and is rebuilt. `refresh = TRUE` on a step, or
 `PIPELINE_REFRESH <- TRUE`, still forces a rebuild regardless.
 
-Rebuilding is cheaper than it sounds, because the two expensive downloads are cached
-at a finer grain and survive: per-study observations (`data/pheno_cache/<studyDbId>.rds`,
-stored **unfiltered by trait**, so changing `TRAIT_NAMES` costs nothing and adding a
-trial downloads only that trial) and per-project VCFs (`data/vcf_cache/`, so rebuilding
-`G` re-derives it without re-downloading markers).
+Rebuilding is cheaper than it sounds, because the expensive work is cached at a finer
+grain and survives:
+
+- **per-study observations** (`data/pheno_cache/<studyDbId>.rds`), stored *unfiltered by
+  trait* — changing `TRAIT_NAMES` costs nothing, and adding a trial downloads only that
+  trial;
+- **per-project VCFs** (`data/vcf_cache/`) — rebuilding `G` never re-downloads markers;
+- **per-protocol partial GRMs** (`data/partials/proto<id>.rds`, GRM + dosage + effective
+  *n*) — this is the layer that skips VCF parsing/thinning, marker QC and the per-marker
+  glmnet imputation, which together dominate step 4. A protocol's partial is keyed on
+  the accessions *that protocol actually carries*, so adding an accession it does not
+  genotype leaves it alone;
+- **the EM-combined `G` before subsetting** (`data/combined_G.rds`) — so changing which
+  accessions you predict re-subsets an existing matrix instead of re-running the combine,
+  and changing only the EM weights (`GRM_DF_MEAN`, `PEDIGREE_DF`) re-runs the combine
+  alone.
+
+Step 4 prints a per-phase breakdown when it finishes, marking which phases came from
+cache — so a slow run tells you *which* phase to attack:
+
+```
+✔ 4 Genotyping (6m 41s)
+    downloads .........      0.4s  (cached)
+    parse + thin ......      0.0s  (cached)
+    QC + impute .......      0.0s  (cached)
+    EM combine ........   6m 31s
+```
 
 *Exception:* Stage 2 (`stage2_gblup`) validates by **content** rather than by request —
 it reuses its GEBV cache when the candidate set matches and it covers at least the

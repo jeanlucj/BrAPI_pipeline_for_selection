@@ -86,6 +86,18 @@ Things that require reading several files to grasp:
   break. Step 03 additionally caches raw per-study observations to
   `data/pheno_cache/<studyDbId>.rds` **unfiltered by trait** (trait filtering happens at
   read time), so a `TRAIT_NAMES` change costs no download and a new trial costs one.
+- **Step 04 has four cache tiers**, because rebuilding `G` from scratch is ~40 min:
+  `data/vcf_cache/` (downloads) → `data/partials/proto<id>.rds` (GRM + dosage + m_eff per
+  protocol: skips parse/thin/QC/glmnet-impute, the dominant cost) and
+  `data/partials/pedigree.rds` → `data/combined_G.rds` (the EM combine, ~5.5 min at
+  n≈3000, over targets **and** bridges) → `data/genotypes.rds` (subset to targets +
+  injection, milliseconds). Two things to preserve when editing: a protocol's key uses
+  `intersect(keep_samples, all_samples)` — the accessions **that protocol carries**, not
+  the whole requested set, or every protocol rebuilds whenever any accession is added
+  anywhere; and `.file_stamp()` keys VCFs on name+size, **not mtime**, since a copy or
+  rsync changes mtime without changing content. Subsetting/injection stays *outside* the
+  combined-G cache so a changed target set is nearly free. `find_and_get_genotypes()`
+  prints a per-phase timing breakdown (`with_phase()`/`print_phases()` in `progress.R`).
 - **All console reporting goes through `code/progress.R`** (`say`/`note`/`note_cache`
   for status, `step_start`/`step_done`/`print_timings` for per-step banners+timing,
   `pb_start`/`pb_tick`/`pb_done` and `pb_wrap` for bars), sourced via `config.R` and

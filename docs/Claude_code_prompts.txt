@@ -1258,3 +1258,12 @@ gebv_sommer <- stage2_gblup(bl, list(G = G), engine = "sommer", refresh = TRUE)
    The bglr output gives non-zero estimates, the estimates from sommer are all zero.  That could be because of a problem or because the line phenotypes are all randomly generated and so independent of the markers leading to a line variance component of zero.  This is in stage L7.  Set up stage L6 so that it samples markers there and attributes a small non-zero effect to each marker (all markers are causal for the trait) so that each line has a genetic effect and that genetic effect is then used in randomly generating phenotypes.  Then variance components should be non-zero.
 [2026-08-14 15:16:45] On L10, in find_ny_trials, the function never uses TRAINING_TRIALS because ny_trials.rds exists and is not due for a refresh yet.  I don't think that's the behavior we want.
 [2026-08-17 10:48:59] Currently, the README about TRAINING_TRIALS says If not NULL, train on exactly these trials (by studyName) and ignore the radius search. NULL = use the radius search. Their accessions are always predicted. In the current config.R, TRAINING_TRIALS is not NULL.  BUT there is no cache of the training trials and I think the code is reverting to a location-based search.  Maybe I'm misunderstanding what's going on.  Anyway, the behavior the README indicates is what I want, regardless of what's cached
+[2026-08-17 13:40:18] Just ran an analysis.  Here is the time profile: ── Run complete (51m 06.7s) ──────────────────────────────────────────────────────────────
+  1 Connect                  0.1s
+  2 Trials                   0.0s
+  3 Phenotypes               0.0s
+  4 Genotyping          42m 10.0s
+  5 Stage-1 BLUEs            3.8s
+  6 Stage-2 prediction   2m 32.5s
+  6b Cross-validation    6m 20.0s
+  7 Selection                0.2s;  I'm assuming most of the time is spent in the EM-combine.  Does the analysis cache the GRM?  I'm guessing not, but go ahead and build that.  It will be useful for followup analyses.

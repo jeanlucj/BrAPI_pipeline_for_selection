@@ -27,7 +27,9 @@ Or from R: `testthat::test_dir(here::here("tests","testthat"))`.
   synthetic data: BGLR prediction + cross-validation, and a fully *mocked*
   `find_and_get_genotypes` exercising the multi-protocol EM-combine, single-protocol,
   prediction-target subsetting, pedigree-bridged test accessions, and training
-  injection paths (synthetic VCFs, no network). It ends with an **oracle** test built on
+  injection paths (synthetic VCFs, no network), and `test-02-partial-cache.R` proving
+  step 4's intermediate caches are actually used (VCF parses are counted, not assumed)
+  and change nothing about `G`. It ends with an **oracle** test built on
   `simulate_trials()`: a related population with known true breeding values, where both
   engines must recover those values on *held-out* lines and agree with each other. That
   is the regression that catches a kernel silently decoupled from the phenotypes — every
